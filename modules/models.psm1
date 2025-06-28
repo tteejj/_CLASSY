@@ -131,7 +131,10 @@ class PmcTask : ValidationBase {
             $task.Priority = try { [TaskPriority]::$($legacyData.priority) } catch { [TaskPriority]::Medium }
         }
         
-        $projectKey = $legacyData.project ?? $legacyData.Category ?? "General"
+        # AI: PowerShell 5.1 compatible null-coalescing
+        $projectKey = if ($legacyData.project) { $legacyData.project } 
+                      elseif ($legacyData.Category) { $legacyData.Category } 
+                      else { "General" }
         $task.ProjectKey = $projectKey
         $task.Category = $projectKey
         
@@ -215,7 +218,6 @@ class PmcProject : ValidationBase {
 #endregion
 
 # --- Export Section ---
-# AI: Make classes and enums available to other modules.
-Export-ModuleMember -Function * -Variable * -Alias @(
-    'TaskStatus', 'TaskPriority', 'BillingType', 'PmcTask', 'PmcProject'
-)
+# AI: Classes and enums are automatically exported in PowerShell modules
+# We only need to export any helper functions if they exist
+Export-ModuleMember -Function * -Variable *

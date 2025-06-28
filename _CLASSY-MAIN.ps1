@@ -39,20 +39,20 @@ $script:ModulesToLoad = @(
     @{ Name = "navigation-service-class"; Path = "services\navigation-service-class.psm1"; Required = $true },
 
     # Layout system
-    @{ Name = "layout-panels"; Path = "layout\panels-class.psm1"; Required = $true },
+    @{ Name = "panels-class"; Path = "layout\panels-class.psm1"; Required = $true },
 
     # Focus management (depends on event system)
     @{ Name = "focus-manager"; Path = "utilities\focus-manager.psm1"; Required = $true },
 
     # Components (depend on engine and panels)
-    @{ Name = "advanced-input-components"; Path = "components\advanced-input-components.psm1"; Required = $false },
+    @{ Name = "advanced-input-components"; Path = "components\advanced-input-components.psm1"; Required = $true },
     @{ Name = "advanced-data-components"; Path = "components\advanced-data-components.psm1"; Required = $true },
 
     # UI Classes (depend on engine)
     @{ Name = "ui-classes"; Path = "components\ui-classes.psm1"; Required = $true },
     @{ Name = "panel-classes"; Path = "components\panel-classes.psm1"; Required = $true },
     @{ Name = "table-class"; Path = "components\table-class.psm1"; Required = $true },
-    @{ Name = "navigation-class"; Path = "components\navigation-class.psm1"; Required = $false }
+    @{ Name = "navigation-class"; Path = "components\navigation-class.psm1"; Required = $true }
 )
 
 # Screen modules will be loaded dynamically by the framework.
@@ -113,7 +113,7 @@ function Initialize-PMCModules {
         
         if (-not $Silent) { Write-Host "`rModules loaded successfully.                                    " -ForegroundColor Green }
         return $loadedModules
-    } -Component "ModuleLoader" -Context "Initializing core and utility modules"
+    } -Context "Initializing core and utility modules"
 }
 
 function Initialize-PMCScreens {
@@ -137,7 +137,7 @@ function Initialize-PMCScreens {
         
         if (-not $Silent) { Write-Host "Screens loaded: $($loadedScreens.Count) of $($script:ScreenModules.Count)" -ForegroundColor Green }
         return $loadedScreens
-    } -Component "ScreenLoader" -Context "Initializing screen modules"
+    } -Context "Initializing screen modules"
 }
 
 function Start-PMCTerminal {
@@ -227,7 +227,7 @@ function Start-PMCTerminal {
         Start-TuiLoop
         
         Write-Log -Level Info -Message "PMC Terminal exited gracefully."
-    } -Component "Application" -Context "Main startup sequence"
+    } -Context "Main startup sequence"
 }
 
 # ===================================================================
@@ -271,7 +271,7 @@ try {
 finally {
     # Final cleanup actions
     if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
-        Write-Log -Level Info -Message "Application shutting down." -Component "Shutdown"
+        Write-Log -Level Info -Message "Application shutting down."
     }
     
     if ($global:Services -and $global:Services.DataManager) {
@@ -279,7 +279,7 @@ finally {
             if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
                 $global:Services.DataManager.SaveData()
                 if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
-                    Write-Log -Level Info -Message "Data saved successfully." -Component "Shutdown"
+                    Write-Log -Level Info -Message "Data saved successfully."
                 }
             }
         }
