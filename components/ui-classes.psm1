@@ -6,8 +6,7 @@
 
 using namespace System.Text
 
-# Import error handling utilities
-Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
+# AI: FIX - Removed internal Import-Module statement. Dependencies managed by _CLASSY-MAIN.ps1.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -144,5 +143,5 @@ class Screen : UIElement {
     }
 }
 
-# Export all base classes for other modules to use.
-Export-ModuleMember -Class @('UIElement', 'Component', 'Panel', 'Screen')
+# AI: FIX - Removed -Class parameter for PowerShell 5.1 compatibility
+# Classes are automatically exported in PowerShell 5.1 when defined in a module

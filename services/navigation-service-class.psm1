@@ -483,5 +483,5 @@ function Initialize-NavigationService {
     return [NavigationService]::new($Services)
 }
 
-# Export the functions and classes
-Export-ModuleMember -Function Initialize-NavigationService
+# AI: FIX - Export functions only. Classes are automatically exported in PowerShell 5.1
+Export-ModuleMember -Function @('Initialize-NavigationService')

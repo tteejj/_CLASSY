@@ -1,17 +1,9 @@
 # Navigation Component Classes Module for PMC Terminal v5
 # Implements navigation menu functionality with keyboard shortcuts
-# AI: Implements Phase 2.2 of the class migration plan - Navigation Component
-
-# Import base classes
-using module '.\ui-classes.psm1'
+# AI: FIX - Removed using module and Import-Module statements. Dependencies managed by _CLASSY-MAIN.ps1.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-
-
-# Import utilities for error handling
-Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
 
 # NavigationItem - Represents a single menu item
 class NavigationItem {
@@ -313,5 +305,5 @@ class NavigationMenu : Component {
     }
 }
 
-# Export all classes
-Export-ModuleMember -Function * -Cmdlet * -Variable * -Alias *
+# AI: FIX - Removed -Class parameter for PowerShell 5.1 compatibility
+# Classes are automatically exported in PowerShell 5.1 when defined in a module

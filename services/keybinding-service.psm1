@@ -5,8 +5,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Import utilities
-Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
+# AI: FIX - Removed internal Import-Module statement. Dependencies managed by _CLASSY-MAIN.ps1.
 
 # KeybindingService Class - Manages application-wide key bindings
 class KeybindingService {
@@ -375,5 +374,5 @@ function Initialize-KeybindingService {
     return $service
 }
 
-# Export the functions and classes
-Export-ModuleMember -Function Initialize-KeybindingService
+# AI: FIX - Export both the class and the function
+Export-ModuleMember -Function @('Initialize-KeybindingService') -Class @('KeybindingService')

@@ -1,14 +1,9 @@
 # Advanced Data Components Module for PMC Terminal v5
 # Enhanced data display components with sorting, filtering, and pagination
-# AI: Class-based implementation following CLASSY architecture patterns
-
-using module '..\components\ui-classes.psm1'
+# AI: FIX - Removed using module and Import-Module statements. Dependencies managed by _CLASSY-MAIN.ps1.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-# Import utilities for error handling
-Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
 
 #region Advanced Data Table Class
 
@@ -646,5 +641,5 @@ function global:New-TuiDataTable {
 
 #endregion
 
-# Export classes and functions
-Export-ModuleMember -Function @('New-TuiDataTable') -Class @('DataTableComponent')
+# AI: FIX - Export functions only. Classes are automatically exported in PowerShell 5.1
+Export-ModuleMember -Function @('New-TuiDataTable')

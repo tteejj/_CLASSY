@@ -3,21 +3,13 @@
 # Displays and manages tasks.
 # ==============================================================================
 
-# Import models for Task and enum types
-using module '..\modules\models.psm1'
-
-# Import base classes and components
-using module '..\components\ui-classes.psm1'
-using module '..\components\panel-classes.psm1'
-using module '..\components\table-class.psm1'
-
-# AI: Removed utility imports - these are loaded globally by main application
-# Note: error-handling and event-system functions are available globally
+# AI: FIX - Removed all using module statements. Dependencies managed by _CLASSY-MAIN.ps1.
+# Note: All required classes and functions are available globally after module loading.
 
 class TaskListScreen : Screen {
     # --- UI Components ---
     [BorderPanel] $MainPanel
-    [Table] $TaskTable
+    [DataTableComponent] $TaskTable
     [ContentPanel] $NavPanel
 
     # --- State ---
@@ -33,13 +25,22 @@ class TaskListScreen : Screen {
             $this.AddPanel($this.MainPanel)
 
             # --- Task Table ---
-            $this.TaskTable = [Table]::new("TaskTable")
-            $this.TaskTable.SetColumns(@(
-                [TableColumn]::new("Title", "Task Title", 50),
-                [TableColumn]::new("Status", "Status", 15),
-                [TableColumn]::new("Priority", "Priority", 12),
-                [TableColumn]::new("DueDate", "Due Date", 15)
-            ))
+            $this.TaskTable = [DataTableComponent]::new("TaskTable")
+            $this.TaskTable.X = 1
+            $this.TaskTable.Y = 1
+            $this.TaskTable.Width = 118
+            $this.TaskTable.Height = 24
+            $this.TaskTable.Title = "Tasks"
+            $this.TaskTable.ShowBorder = $false
+            
+            # Set columns for the data table
+            $columns = @(
+                @{ Name = "Title"; Header = "Task Title"; Width = 50 },
+                @{ Name = "Status"; Header = "Status"; Width = 15 },
+                @{ Name = "Priority"; Header = "Priority"; Width = 12 },
+                @{ Name = "DueDate"; Header = "Due Date"; Width = 15 }
+            )
+            $this.TaskTable.SetColumns($columns)
             
             $tableContainer = [BorderPanel]::new("TableContainer", 1, 1, 118, 24)
             $tableContainer.ShowBorder = $false
@@ -78,9 +79,13 @@ class TaskListScreen : Screen {
 
     [void] HandleInput([ConsoleKeyInfo]$key) {
         Invoke-WithErrorHandling -Component "TaskListScreen" -Context "HandleInput" -ScriptBlock {
+            # Let the data table handle its own input first
+            if ($this.TaskTable.HandleInput($key)) {
+                return
+            }
+            
+            # Handle screen-specific input
             switch ($key.Key) {
-                ([ConsoleKey]::UpArrow) { $this.TaskTable.SelectPrevious() }
-                ([ConsoleKey]::DownArrow) { $this.TaskTable.SelectNext() }
                 ([ConsoleKey]::Spacebar) { $this.ToggleSelectedTask() }
                 ([ConsoleKey]::Escape) { $this.Services.Navigation.PopScreen() }
                 default {
@@ -96,14 +101,16 @@ class TaskListScreen : Screen {
     }
     
     hidden [void] ToggleSelectedTask() {
-        $task = $this.TaskTable.GetSelectedItem()
-        if ($task) {
-            if ($task.Status -eq [TaskStatus]::Completed) {
-                $task.Status = [TaskStatus]::Active
-            } else {
-                $task.Complete()
+        if ($this.TaskTable.ProcessedData -and $this.TaskTable.SelectedRow -lt $this.TaskTable.ProcessedData.Count) {
+            $task = $this.TaskTable.ProcessedData[$this.TaskTable.SelectedRow]
+            if ($task) {
+                if ($task.Status -eq [TaskStatus]::Completed) {
+                    $task.Status = [TaskStatus]::Active
+                } else {
+                    $task.Complete()
+                }
+                $this.Services.DataManager.UpdateTask($task)
             }
-            $this.Services.DataManager.UpdateTask($task)
         }
     }
 
