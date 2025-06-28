@@ -1,0 +1,339 @@
+The user wants a migration document for converting existing components to use the IRenderable pattern and the enhanced error handling. This should be a practical, step-by-step guide that helps developers (or the LLM) systematically convert the existing codebase to the new stable architecture.
+
+I need to create a comprehensive migration guide that covers:
+1. How to identify components that need migration
+2. Step-by-step conversion process
+3. Common pitfalls and how to avoid them
+4. Priority order for migration
+5. Validation steps
+
+This should be formatted as a clear, actionable document that can be followed methodically.
+
+# PMC Terminal v5 - IRenderable Migration Guide
+
+## Overview
+This document provides step-by-step instructions for migrating existing UI components to the stable IRenderable pattern and implementing enhanced error handling throughout the codebase.
+
+## Migration Priority Order
+
+### Phase 1: Critical UI Components (Highest Error Risk)
+1. **TableComponent** - Complex rendering logic with potential null data
+2. **TaskListComponent** - Frequent data updates, potential for empty states
+3. **ProjectTreeComponent** - Recursive rendering, high complexity
+4. **StatusBarComponent** - Real-time updates, potential for race conditions
+
+### Phase 2: Core Views
+5. **MainView** - Primary user interface
+6. **ProjectView** - Project management interface
+7. **TaskDetailView** - Detail editing interface
+8. **SettingsView** - Configuration interface
+
+### Phase 3: Supporting Components
+9. **HeaderComponent** - Simple but critical for layout
+10. **MenuComponent** - User input handling
+11. **HelpComponent** - Static content, lower risk
+12. **FooterComponent** - Minimal dynamic content
+
+## Step-by-Step Migration Process
+
+### Step 1: Identify Component to Migrate
+
+Look for files matching these patterns:
+- `*Component.psm1` in `/screens/components/`
+- `*View.psm1` in `/screens/views/`
+- Any class that has a `Render()` method
+
+### Step 2: Analyze Current Implementation
+
+Document the component's:
+- Current data dependencies
+- External service calls
+- Potential failure points
+- Existing error handling (if any)
+
+### Step 3: Create IRenderable Base Import
+
+Add to the top of the component file:
+```powershell
+# Import the IRenderable base class
+using module .\components\IRenderable.psm1
+```
+
+### Step 4: Refactor Class Declaration
+
+**BEFORE:**
+```powershell
+class TaskListComponent {
+    [hashtable]$Config
+    
+    TaskListComponent([hashtable]$config) {
+        $this.Config = $config
+    }
+    
+    [string] Render() {
+        # Existing render logic
+    }
+}
+```
+
+**AFTER:**
+```powershell
+class TaskListComponent : IRenderable {
+    [hashtable]$Config
+    
+    # AI: Refactored to inherit from IRenderable for render stability
+    TaskListComponent([hashtable]$config) : base("TaskList") {
+        $this.Config = $config
+    }
+    
+    # AI: Moved render logic to _RenderContent as required by IRenderable
+    hidden [string] _RenderContent() {
+        # Existing render logic (modified - see Step 5)
+    }
+}
+```
+
+### Step 5: Migrate Render Logic
+
+Move ALL content from the old `Render()` method to `_RenderContent()`:
+
+**Key Changes Required:**
+1. Remove any existing try/catch wrapper (IRenderable handles this)
+2. Add defensive null checks
+3. Use StringBuilder for string concatenation in loops
+4. Ensure all exceptions bubble up naturally
+
+**BEFORE:**
+```powershell
+[string] Render() {
+    try {
+        $tasks = $Global:DataManager.GetTasks()
+        $output = ""
+        foreach ($task in $tasks) {
+            $output += "[$($task.Id)] $($task.Title)`n"
+        }
+        return $output
+    }
+    catch {
+        return "Error rendering tasks"
+    }
+}
+```
+
+**AFTER:**
+```powershell
+hidden [string] _RenderContent() {
+    # AI: Direct service access with defensive checks
+    $tasks = $Global:Services.DataManager.GetTasks()
+    
+    if ($null -eq $tasks -or $tasks.Count -eq 0) {
+        return "No tasks to display."
+    }
+    
+    # AI: StringBuilder for efficient string concatenation
+    $sb = [System.Text.StringBuilder]::new()
+    $sb.AppendLine("Task List:") | Out-Null
+    $sb.AppendLine("-" * 40) | Out-Null
+    
+    foreach ($task in $tasks) {
+        # AI: Let exceptions bubble up - IRenderable will catch them
+        $line = "[{0}] {1} - {2}" -f `
+            $task.Id.Substring(0, 8), `
+            $task.Title.PadRight(30), `
+            $task.Status
+        $sb.AppendLine($line) | Out-Null
+    }
+    
+    return $sb.ToString().TrimEnd()
+}
+```
+
+### Step 6: Update Service Calls
+
+Identify all service method calls within the component and ensure they use enhanced error handling:
+
+**BEFORE:**
+```powershell
+[void] UpdateTask([string]$taskId, [string]$newTitle) {
+    $task = $Global:Services.DataManager.GetTaskById($taskId)
+    $task.Title = $newTitle
+    $Global:Services.DataManager.SaveData()
+}
+```
+
+**AFTER:**
+```powershell
+[void] UpdateTask([string]$taskId, [string]$newTitle) {
+    # AI: Enhanced error handling with state capture
+    Invoke-WithErrorHandling `
+        -Component $this._componentName `
+        -Context "UpdateTask" `
+        -State @{
+            TaskId = $taskId
+            NewTitle = $newTitle
+            ComponentState = $this.GetState()  # If component has state
+        } `
+        -ScriptBlock {
+            $task = $Global:Services.DataManager.GetTaskById($taskId)
+            
+            if ($null -eq $task) {
+                throw "Task not found: $taskId"
+            }
+            
+            $task.Title = $newTitle
+            $Global:Services.DataManager.SaveData()
+        }
+}
+```
+
+### Step 7: Remove Old Error Handling
+
+Remove or refactor these patterns:
+- Generic try/catch blocks that hide errors
+- Return of error strings instead of throwing
+- Silent error suppression
+
+### Step 8: Add Component Validation
+
+Add a validation method to test the component:
+```powershell
+# AI: Validation method for testing render stability
+[bool] ValidateRender() {
+    try {
+        $output = $this.Render()
+        return -not [string]::IsNullOrWhiteSpace($output)
+    }
+    catch {
+        Write-Warning "Component validation failed: $_"
+        return $false
+    }
+}
+```
+
+## Common Migration Patterns
+
+### Pattern 1: Data-Dependent Components
+
+```powershell
+hidden [string] _RenderContent() {
+    # Always check service availability
+    if ($null -eq $Global:Services -or $null -eq $Global:Services.DataManager) {
+        throw "Required services not initialized"
+    }
+    
+    # Get data with defensive checks
+    $data = $Global:Services.DataManager.GetData()
+    if ($null -eq $data) {
+        return "No data available."
+    }
+    
+    # Process data...
+}
+```
+
+### Pattern 2: Components with User Input
+
+```powershell
+hidden [string] _RenderContent() {
+    $sb = [System.Text.StringBuilder]::new()
+    
+    # Defensive check on input state
+    if ($null -ne $this.CurrentInput) {
+        $sb.AppendLine("Current: $($this.CurrentInput)") | Out-Null
+    }
+    
+    # Menu options with safe formatting
+    foreach ($option in $this.Options) {
+        if ($null -ne $option -and $null -ne $option.Key -and $null -ne $option.Label) {
+            $sb.AppendLine("[$($option.Key)] $($option.Label)") | Out-Null
+        }
+    }
+    
+    return $sb.ToString()
+}
+```
+
+### Pattern 3: Composite Components
+
+```powershell
+hidden [string] _RenderContent() {
+    $sb = [System.Text.StringBuilder]::new()
+    
+    # Render sub-components with error isolation
+    foreach ($subComponent in $this.SubComponents) {
+        if ($null -ne $subComponent) {
+            # Each sub-component's Render() is also protected
+            $sb.AppendLine($subComponent.Render()) | Out-Null
+        }
+    }
+    
+    return $sb.ToString()
+}
+```
+
+## Validation Checklist
+
+After migrating each component:
+
+- [ ] Component inherits from IRenderable
+- [ ] Constructor calls base constructor with component name
+- [ ] All render logic is in `_RenderContent()` method
+- [ ] No try/catch blocks in `_RenderContent()`
+- [ ] Defensive null checks for all external data
+- [ ] StringBuilder used for string concatenation in loops
+- [ ] Service calls use `Invoke-WithErrorHandling` with `-State`
+- [ ] Old `Render()` method is completely removed
+- [ ] Component can handle null/empty data gracefully
+- [ ] Error states produce readable output, not crashes
+
+## Testing Migration Success
+
+### Manual Validation Commands
+
+```powershell
+# Test individual component rendering
+$component = [TaskListComponent]::new($config)
+$output = $component.Render()
+Write-Host $output
+
+# Test error handling (simulate null data)
+$Global:Services.DataManager = $null
+$output = $component.Render()
+# Should show error box, not crash
+
+# Test state capture in logs
+$component.UpdateTask("invalid-id", "New Title")
+# Check logs for captured state information
+```
+
+### Success Indicators
+
+1. **No Unhandled Exceptions** - Components show error boxes instead of crashing
+2. **Informative Error Messages** - Errors identify the component and context
+3. **Graceful Degradation** - UI remains usable even when components fail
+4. **Detailed Logs** - Error logs contain state information for debugging
+
+## Migration Timeline
+
+- **Week 1**: Migrate all Phase 1 components
+- **Week 2**: Migrate Phase 2 views
+- **Week 3**: Complete Phase 3 and validate entire UI
+- **Week 4**: Performance optimization and final testing
+
+## Troubleshooting Common Issues
+
+### Issue: "Method not found: Render"
+**Solution**: Ensure you're not overriding the base `Render()` method. Only implement `_RenderContent()`.
+
+### Issue: Component name not showing in errors
+**Solution**: Verify the base constructor is called with `: base("ComponentName")`
+
+### Issue: State not captured in errors
+**Solution**: Check that `-State` parameter is passed to `Invoke-WithErrorHandling`
+
+### Issue: Circular dependency errors
+**Solution**: Use late binding for service access: `$Global:Services.DataManager`
+
+---
+
+**Remember**: The goal is stability, not perfection. A component that shows an error box is better than one that crashes the application.

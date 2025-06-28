@@ -1,0 +1,147 @@
+# ==============================================================================
+# PMC Terminal v5 - Class-Based Keybinding Service
+# Manages global and contextual keybindings for the application.
+# ==============================================================================
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# Import utilities
+Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
+
+class KeybindingService {
+    # --- Properties ---
+    [hashtable] $KeyMap
+    [hashtable] $GlobalHandlers
+    [System.Collections.Generic.List[string]] $ContextStack
+
+    # --- Constructor ---
+    KeybindingService() {
+        $this.ContextStack = [System.Collections.Generic.List[string]]::new()
+        $this.GlobalHandlers = @{}
+        $this.InitializeDefaultBindings()
+        Write-Log -Level Info -Message "KeybindingService initialized." -Component "KeybindingService"
+    }
+
+    # --- Public Methods ---
+
+    [void] SetBinding([string]$actionName, [System.ConsoleKeyInfo]$keyInfo) {
+        [ValidationBase]::ValidateNotEmpty($actionName, "actionName")
+        
+        $modifiers = @()
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control) { $modifiers += "Ctrl" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) { $modifiers += "Alt" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) { $modifiers += "Shift" }
+
+        $this.KeyMap[$actionName.ToLower()] = @{
+            Key = $keyInfo.Key
+            KeyChar = $keyInfo.KeyChar
+            Modifiers = $modifiers
+        }
+        Write-Log -Level Debug -Message "Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))" -Component "KeybindingService"
+    }
+    
+    [string] GetAction([System.ConsoleKeyInfo]$keyInfo) {
+        return Invoke-WithErrorHandling -Component "KeybindingService" -Context "GetAction" -ScriptBlock {
+            foreach ($actionName in $this.KeyMap.Keys) {
+                if ($this.IsActionMatch($actionName, $keyInfo)) {
+                    return $actionName
+                }
+            }
+            return $null
+        }
+    }
+
+    [void] RegisterGlobalHandler([string]$actionName, [scriptblock]$handler) {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "RegisterGlobalHandler" -ScriptBlock {
+            [ValidationBase]::ValidateNotEmpty($actionName, "actionName")
+            if (-not $handler) { throw [System.ArgumentNullException]::new("handler") }
+            
+            $this.GlobalHandlers[$actionName.ToLower()] = $handler
+        }
+    }
+
+    [void] PushContext([string]$context) {
+        [ValidationBase]::ValidateNotEmpty($context, "context")
+        $this.ContextStack.Add($context)
+        Write-Log -Level Debug -Message "Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
+    }
+
+    [string] PopContext() {
+        if ($this.ContextStack.Count -eq 0) { return $null }
+        
+        $context = $this.ContextStack[-1]
+        $this.ContextStack.RemoveAt($this.ContextStack.Count - 1)
+        Write-Log -Level Debug -Message "Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
+        return $context
+    }
+
+    [string] GetCurrentContext() {
+        if ($this.ContextStack.Count -gt 0) {
+            return $this.ContextStack[-1]
+        }
+        return "global"
+    }
+
+    [string] GetBindingDescription([string]$actionName) {
+        $normalizedName = $actionName.ToLower()
+        if (-not $this.KeyMap.ContainsKey($normalizedName)) { return "Unbound" }
+        
+        $binding = $this.KeyMap[$normalizedName]
+        $keyStr = if ($binding.KeyChar -eq [char]0) { $binding.Key.ToString() } else { $binding.KeyChar.ToString().ToUpper() }
+        
+        if ($binding.Modifiers.Count -gt 0) {
+            return "$($binding.Modifiers -join '+') + $keyStr"
+        }
+        return $keyStr
+    }
+    
+    # --- Private Helper Methods ---
+
+    hidden [void] InitializeDefaultBindings() {
+        $this.KeyMap = @{
+            "app.exit"     = @{ Key = [System.ConsoleKey]::Q; Modifiers = @("Ctrl") }
+            "nav.back"     = @{ Key = [System.ConsoleKey]::Escape; Modifiers = @() }
+            "nav.up"       = @{ Key = [System.ConsoleKey]::UpArrow; Modifiers = @() }
+            "nav.down"     = @{ Key = [System.ConsoleKey]::DownArrow; Modifiers = @() }
+            "nav.left"     = @{ Key = [System.ConsoleKey]::LeftArrow; Modifiers = @() }
+            "nav.right"    = @{ Key = [System.ConsoleKey]::RightArrow; Modifiers = @() }
+            "nav.select"   = @{ Key = [System.ConsoleKey]::Enter; Modifiers = @() }
+            "nav.tab"      = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @() }
+            "nav.shifttab" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @("Shift") }
+            "edit.delete"  = @{ Key = [System.ConsoleKey]::Delete; Modifiers = @() }
+            "edit.new"     = @{ KeyChar = 'n'; Modifiers = @() }
+            "edit.save"    = @{ KeyChar = 's'; Modifiers = @("Ctrl") }
+        }
+    }
+
+    hidden [bool] IsActionMatch([string]$actionName, [System.ConsoleKeyInfo]$keyInfo) {
+        $binding = $this.KeyMap[$actionName]
+        if (-not $binding) { return $false }
+        
+        # Match modifiers
+        $hasCtrl = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control)
+        $hasAlt = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt)
+        $hasShift = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift)
+        
+        $reqCtrl = "Ctrl" -in $binding.Modifiers
+        $reqAlt = "Alt" -in $binding.Modifiers
+        $reqShift = "Shift" -in $binding.Modifiers
+
+        if (($hasCtrl -ne $reqCtrl) -or ($hasAlt -ne $reqAlt) -or ($hasShift -ne $reqShift)) {
+            return $false
+        }
+
+        # Match key
+        if ($binding.KeyChar -and $binding.KeyChar -ne [char]0) {
+            # Character-based binding (case-insensitive)
+            return $keyInfo.KeyChar.ToString().Equals($binding.KeyChar.ToString(), [System.StringComparison]::OrdinalIgnoreCase)
+        } else {
+            # ConsoleKey-based binding
+            return $keyInfo.Key -eq $binding.Key
+        }
+    }
+}
+
+# Export the KeybindingService class
+Export-ModuleMember -Class 'KeybindingService'

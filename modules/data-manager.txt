@@ -1,0 +1,137 @@
+# ==============================================================================
+# PMC Terminal v5 - Data Manager Module (Corrected Dependencies)
+# Manages data persistence and CRUD operations using strongly-typed models.
+# ==============================================================================
+
+# AI-FIX: All 'using module' statements have been removed.
+# The Start-App.ps1 script is now solely responsible for loading dependencies
+# in the correct order before this module is imported.
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# --- Module-level state variables ---
+$script:Data = @{
+    Projects = [System.Collections.Generic.List[PmcProject]]::new()
+    Tasks = [System.Collections.Generic.List[PmcTask]]::new()
+    Settings = @{
+        Theme = "Modern"
+        AutoSave = $true
+        BackupCount = 5
+    }
+}
+$script:DataPath = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "PMCTerminal\pmc-data.json"
+$script:BackupPath = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "PMCTerminal\backups"
+
+# --- Public Service Functions ---
+
+function Initialize-DataManager {
+    <#
+    .SYNOPSIS Initializes the data management system.
+    .DESCRIPTION Sets up directories, loads data, and returns the service object.
+    #>
+    [CmdletBinding()]
+    param()
+    
+    return Invoke-WithErrorHandling -Component "DataManager" -Context "Initialize" -ScriptBlock {
+        $dataDirectory = Split-Path $script:DataPath -Parent
+        if (-not (Test-Path $dataDirectory)) {
+            New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+            Write-Log -Level Info -Message "Created data directory: $dataDirectory"
+        }
+        
+        if (-not (Test-Path $script:BackupPath)) {
+            New-Item -ItemType Directory -Path $script:BackupPath -Force | Out-Null
+        }
+        
+        Load-UnifiedData
+        
+        Write-Log -Level Info -Message "DataManager initialized successfully."
+        
+        # Return a service object with direct methods
+        # AI-NOTE: The actual class is defined below. This factory function returns an instance of it.
+        return [DataManager]::new()
+    }
+}
+
+# --- DataManager Class Definition ---
+
+class DataManager {
+    hidden [hashtable] $DataStore
+    hidden [string] $DataFilePath
+    hidden [bool] $AutoSaveEnabled = $true
+    hidden [System.Timers.Timer] $AutoSaveTimer
+    
+    DataManager() {
+        $this.DataStore = $script:Data
+        $global:Data = $script:Data # Ensure global state is set
+        $this.DataFilePath = $script:DataPath
+        $this.AutoSaveEnabled = $this.DataStore.Settings.AutoSave
+    }
+
+    [void] LoadData() {
+        Invoke-WithErrorHandling -Component "DataManager" -Context "LoadData" -ScriptBlock {
+            if (-not (Test-Path $this.DataFilePath)) {
+                Write-Log -Level Info -Message "No data file found, using defaults."
+                return
+            }
+            try {
+                $content = Get-Content -Path $this.DataFilePath -Raw
+                $loadedData = $content | ConvertFrom-Json -AsHashtable
+                
+                if ($loadedData.Tasks) {
+                    $this.DataStore.Tasks.Clear()
+                    foreach ($taskData in $loadedData.Tasks) {
+                        $this.DataStore.Tasks.Add([PmcTask]::FromLegacyFormat($taskData))
+                    }
+                }
+                if ($loadedData.Projects) {
+                    $this.DataStore.Projects.Clear()
+                    foreach ($projectData in $loadedData.Projects.Values) {
+                        $this.DataStore.Projects.Add([PmcProject]::FromLegacyFormat($projectData))
+                    }
+                }
+                if ($loadedData.Settings) {
+                    $this.DataStore.Settings = $loadedData.Settings
+                    $this.AutoSaveEnabled = $this.DataStore.Settings.AutoSave
+                }
+                Write-Log -Level Info -Message "Data loaded successfully from $($this.DataFilePath)"
+            } catch {
+                Write-Log -Level Error -Message "Failed to load or parse data file: $_. Using default data."
+            }
+        }
+    }
+
+    [void] SaveData() {
+        Invoke-WithErrorHandling -Component "DataManager" -Context "SaveData" -ScriptBlock {
+            $dataToSave = @{
+                Tasks = @($this.DataStore.Tasks | ForEach-Object { $_.ToLegacyFormat() })
+                Projects = @{}
+                Settings = $this.DataStore.Settings
+            }
+            $this.DataStore.Projects.ForEach({ param($p) $dataToSave.Projects[$p.Key] = $p.ToLegacyFormat() })
+            
+            $dataToSave | ConvertTo-Json -Depth 10 | Set-Content -Path $this.DataFilePath -Encoding UTF8
+            Write-Log -Level Debug -Message "Data saved successfully."
+        }
+    }
+
+    [PmcTask] AddTask([string]$Title, [string]$Description, [TaskPriority]$Priority, [string]$ProjectKey) {
+        return Invoke-WithErrorHandling -Component "DataManager" -Context "AddTask" -ScriptBlock {
+            $newTask = [PmcTask]::new($Title, $Description, $Priority, $ProjectKey)
+            $this.DataStore.Tasks.Add($newTask)
+            if ($this.AutoSaveEnabled) { $this.SaveData() }
+            Publish-Event -EventName "Tasks.Changed" -Data @{ Action = "Created"; Task = $newTask }
+            Write-Log -Level Info -Message "Created task '$($newTask.Title)'"
+            return $newTask
+        }
+    }
+    
+    [PmcTask[]] GetTasks() {
+        return @($this.DataStore.Tasks)
+    }
+}
+
+
+# Export the factory function, which is the public entry point for this module.
+Export-ModuleMember -Function 'Initialize-DataManager'

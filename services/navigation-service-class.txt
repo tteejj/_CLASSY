@@ -1,0 +1,149 @@
+# ==============================================================================
+# PMC Terminal v5 - Class-Based Navigation Service
+# Manages screen transitions, history, and creation via a ScreenFactory.
+# ==============================================================================
+
+using namespace System.Collections.Generic
+
+# Import dependencies
+Import-Module "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
+Import-Module "$PSScriptRoot\..\utilities\event-system.psm1" -Force
+Import-Module "$PSScriptRoot\..\components\ui-classes.psm1" -Force
+
+# AI: Import ALL screen classes that the factory needs to know about.
+Import-Module "$PSScriptRoot\..\screens\dashboard\dashboard-screen-class.psm1" -Force
+Import-Module "$PSScriptRoot\..\screens\task-list-screen-class.psm1" -Force
+Import-Module "$PSScriptRoot\..\screens\new-task-screen-class.psm1" -Force
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+#region --- Helper Class: ScreenFactory ---
+# AI: The ScreenFactory is now an internal helper class within this module,
+# as it's exclusively used by the NavigationService.
+
+class ScreenFactory {
+    [hashtable]$Services
+    [Dictionary[string, type]]$ScreenTypes
+
+    ScreenFactory([hashtable]$services) {
+        if (-not $services) { throw [System.ArgumentNullException]::new("services") }
+        $this.Services = $services
+        $this.ScreenTypes = [Dictionary[string, type]]::new()
+        $this.RegisterDefaultScreens()
+    }
+
+    hidden [void] RegisterDefaultScreens() {
+        Write-Log -Level Debug -Message "Registering all known screen types..." -Component "ScreenFactory"
+        $this.ScreenTypes["DashboardScreen"] = [DashboardScreen]
+        $this.ScreenTypes["TaskListScreen"] = [TaskListScreen]
+        $this.ScreenTypes["NewTaskScreen"] = [NewTaskScreen]
+        # AI: Add future screen classes here as they are created.
+        # e.g., $this.ScreenTypes["ProjectScreen"] = [ProjectScreen]
+    }
+
+    [Screen] CreateScreen([string]$screenName, [hashtable]$parameters) {
+        if (-not $this.ScreenTypes.ContainsKey($screenName)) {
+            throw [System.InvalidOperationException]::new("Unknown screen type: '$screenName'. Ensure it is registered in the ScreenFactory.")
+        }
+
+        $screenType = $this.ScreenTypes[$screenName]
+        Write-Log -Level Debug -Message "Creating instance of screen: $($screenType.Name)" -Component "ScreenFactory"
+
+        # Create the new screen instance, passing the services collection to its constructor.
+        $screen = $screenType::new($this.Services)
+
+        # Pass any additional parameters to the screen's state.
+        if ($parameters) {
+            foreach ($key in $parameters.Keys) {
+                $screen.State[$key] = $parameters[$key]
+            }
+        }
+        return $screen
+    }
+}
+#endregion
+
+#region --- Main Class: NavigationService ---
+
+class NavigationService {
+    [Stack[Screen]]$ScreenStack
+    [Screen]$CurrentScreen
+    [ScreenFactory]$ScreenFactory
+    [hashtable]$Services
+
+    NavigationService([hashtable]$services) {
+        if (-not $services) { throw [System.ArgumentNullException]::new("services") }
+        $this.Services = $services
+        $this.ScreenStack = [Stack[Screen]]::new()
+        $this.ScreenFactory = [ScreenFactory]::new($services)
+    }
+
+    [void] PushScreen([string]$screenName, [hashtable]$parameters = @{}) {
+        Invoke-ClassMethod -ClassName "NavigationService" -MethodName "PushScreen" -ScriptBlock {
+            Write-Log -Level Info -Message "Navigating to screen: $screenName" -Data $parameters
+
+            # Create the new screen instance.
+            $newScreen = $this.ScreenFactory.CreateScreen($screenName, $parameters)
+
+            # If a screen is already active, call its OnExit and push it to the stack.
+            if ($this.CurrentScreen) {
+                $this.CallScreenMethod($this.CurrentScreen, "OnExit")
+                $this.ScreenStack.Push($this.CurrentScreen)
+            }
+
+            $this.CurrentScreen = $newScreen
+            
+            # Initialize the new screen. This is where the screen builds its UI.
+            $this.CallScreenMethod($newScreen, "Initialize")
+            $this.CallScreenMethod($newScreen, "OnEnter")
+
+            # Update the TUI Engine's state
+            if ($global:TuiState) {
+                $global:TuiState.CurrentScreen = $newScreen
+                Request-TuiRefresh
+            }
+            Publish-Event -EventName "Navigation.Pushed" -Data @{ Screen = $screenName }
+        }
+    }
+
+    [bool] PopScreen() {
+        return Invoke-ClassMethod -ClassName "NavigationService" -MethodName "PopScreen" -ScriptBlock {
+            if ($this.ScreenStack.Count -eq 0) {
+                Write-Log -Level Warning -Message "Cannot pop screen: stack is empty."
+                return $false
+            }
+            
+            $this.CallScreenMethod($this.CurrentScreen, "OnExit")
+            $this.CurrentScreen = $this.ScreenStack.Pop()
+            $this.CallScreenMethod($this.CurrentScreen, "OnResume")
+
+            if ($global:TuiState) {
+                $global:TuiState.CurrentScreen = $this.CurrentScreen
+                Request-TuiRefresh
+            }
+            Publish-Event -EventName "Navigation.Popped" -Data @{ Screen = $this.CurrentScreen.Name }
+            return $true
+        }
+    }
+
+    # Helper to safely call methods that might not exist on all screen objects.
+    hidden [void] CallScreenMethod([Screen]$screen, [string]$methodName) {
+        if (-not $screen) { return }
+        
+        # Check if the method exists on the class before calling it.
+        $method = $screen.GetType().GetMethod($methodName)
+        if ($method) {
+            try {
+                $method.Invoke($screen, @())
+            }
+            catch {
+                Write-Log -Level Error -Message "Error calling '$methodName' on screen '$($screen.Name)': $_"
+            }
+        }
+    }
+}
+#endregion
+
+# Export the NavigationService class
+Export-ModuleMember -Class 'NavigationService'
