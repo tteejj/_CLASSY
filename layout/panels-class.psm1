@@ -2,13 +2,18 @@
 # Implements specialized panel types for the TUI layout system
 # AI: Implements Phase 1.2 of the class migration plan - layout components
 
-# Import base classes
-using module '..\components\ui-classes.psm1'
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# AI: Import dependencies using absolute paths for PowerShell 5.1 compatibility
+# PowerShell 5.1 requires 'using module' statements to be at the top level, not in conditional blocks
+$uiClassesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "components\ui-classes.psm1"
+if (-not (Test-Path $uiClassesPath)) {
+    throw "Required module not found: ui-classes.psm1 at $uiClassesPath"
+}
 
+# Import the base UI classes module
+Import-Module $uiClassesPath -Force -Global
 
 # Import utilities for error handling
 Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force

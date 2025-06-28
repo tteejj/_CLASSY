@@ -24,7 +24,7 @@ class ScreenFactory {
         $this.ScreenTypes = @{
             "DashboardScreen" = { param($services) $this.CreateClassBasedScreen("DashboardScreen", $services) }
             "TaskListScreen" = { param($services) $this.CreateClassBasedScreen("TaskListScreen", $services) }
-            "NewTaskScreen" = { param($services) $this.CreateClassBasedScreen("NewTaskScreen", $services) }
+            # AI: Removed NewTaskScreen until it's implemented
         }
         
         # AI: Also support function-based screens for backward compatibility
@@ -162,7 +162,7 @@ class NavigationService {
             "/" = "DashboardScreen"
             "/dashboard" = "DashboardScreen"
             "/tasks" = "TaskListScreen"
-            "/new-task" = "NewTaskScreen"
+            # AI: Removed /new-task route until NewTaskScreen is implemented
         }
     }
     

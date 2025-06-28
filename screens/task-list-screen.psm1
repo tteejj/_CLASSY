@@ -11,9 +11,8 @@ using module '..\components\ui-classes.psm1'
 using module '..\components\panel-classes.psm1'
 using module '..\components\table-class.psm1'
 
-# Import utilities
-Import-Module "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
-Import-Module "$PSScriptRoot\..\utilities\event-system.psm1" -Force
+# AI: Removed utility imports - these are loaded globally by main application
+# Note: error-handling and event-system functions are available globally
 
 class TaskListScreen : Screen {
     # --- UI Components ---

@@ -5,10 +5,6 @@
 #     service initialization patterns from the R2 version, adapted for class-based architecture.
 #
 
-# AI: Import models module classes globally to make them available to all dependent modules
-# This must be done BEFORE loading any modules that reference these classes
-using module .\modules\models.psm1
-
 # Set strict mode for better error handling and PowerShell best practices.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -23,7 +19,7 @@ $script:ModulesToLoad = @(
     @{ Name = "exceptions"; Path = "modules\exceptions.psm1"; Required = $true },
     @{ Name = "logger"; Path = "modules\logger.psm1"; Required = $true },
     @{ Name = "event-system"; Path = "modules\event-system.psm1"; Required = $true },
-    # AI: models module is loaded via 'using module' statement at top of file
+    @{ Name = "models"; Path = "modules\models.psm1"; Required = $true },
 
     # Data and theme (depend on event system and models)
     @{ Name = "data-manager"; Path = "modules\data-manager.psm1"; Required = $true },
@@ -53,7 +49,7 @@ $script:ModulesToLoad = @(
     @{ Name = "advanced-data-components"; Path = "components\advanced-data-components.psm1"; Required = $true },
     @{ Name = "tui-components"; Path = "components\tui-components.psm1"; Required = $false },
 
-    # UI Classes (depend on engine)
+    # UI Classes (depend on engine and models) - MUST be loaded in dependency order
     @{ Name = "ui-classes"; Path = "components\ui-classes.psm1"; Required = $true },
     @{ Name = "panel-classes"; Path = "components\panel-classes.psm1"; Required = $true },
     @{ Name = "table-class"; Path = "components\table-class.psm1"; Required = $true },
@@ -282,17 +278,20 @@ finally {
         Write-Log -Level Info -Message "Application shutting down."
     }
     
-    if ($global:Services -and $global:Services.DataManager) {
-        try {
-            if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
-                $global:Services.DataManager.SaveData()
-                if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
-                    Write-Log -Level Info -Message "Data saved successfully."
+    # AI: Check if $global:Services exists before trying to access it
+    if (Test-Path Variable:global:Services) {
+        if ($global:Services -and $global:Services.DataManager) {
+            try {
+                if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
+                    $global:Services.DataManager.SaveData()
+                    if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
+                        Write-Log -Level Info -Message "Data saved successfully."
+                    }
                 }
             }
-        }
-        catch {
-            Write-Warning "Failed to save data on exit: $_"
+            catch {
+                Write-Warning "Failed to save data on exit: $_"
+            }
         }
     }
 }

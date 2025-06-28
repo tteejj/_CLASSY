@@ -3,8 +3,8 @@
 # AI: Refactored from dispatch-based actions to direct function calls
 # AI: Now uses strongly-typed PmcTask and PmcProject classes from models module
 
-# AI-FIX: Removed 'using module' statements to prevent circular dependencies
-# Dependencies are loaded by the main application in proper order
+# AI: Using absolute path for models module to ensure proper loading
+using module $PSScriptRoot\models.psm1
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -689,6 +689,40 @@ function Initialize-DataEventHandlers {
         }
         
         Write-Log -Level Debug -Message "Data event handlers initialized"
+    }
+}
+
+#endregion
+
+#region Public Initialization Function
+
+function Initialize-DataManager {
+    <#
+    .SYNOPSIS
+    Initializes the data manager service and returns a DataManager instance
+    
+    .DESCRIPTION
+    This function loads existing data, sets up event handlers, and returns
+    a DataManager service instance for use by the application.
+    #>
+    [CmdletBinding()]
+    param()
+    
+    Invoke-WithErrorHandling -Component "DataManager.Initialize" -Context "Initializing data manager service" -ScriptBlock {
+        Write-Log -Level Info -Message "Initializing DataManager service"
+        
+        # Load existing data
+        Load-UnifiedData
+        
+        # Initialize event handlers
+        Initialize-DataEventHandlers
+        
+        # Create and return DataManager instance
+        $dataManager = [DataManager]::new()
+        
+        Write-Log -Level Info -Message "DataManager service initialized successfully"
+        
+        return $dataManager
     }
 }
 
