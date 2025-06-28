@@ -374,5 +374,6 @@ function Initialize-KeybindingService {
     return $service
 }
 
-# AI: FIX - Export both the class and the function
-Export-ModuleMember -Function @('Initialize-KeybindingService') -Class @('KeybindingService')
+# AI: FIX - PowerShell 5.1 doesn't support -Class parameter
+# Classes are automatically exported when module is imported
+Export-ModuleMember -Function @('Initialize-KeybindingService')

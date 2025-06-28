@@ -2,15 +2,19 @@
 # Unified data persistence and CRUD operations with event integration
 # AI: Refactored from dispatch-based actions to direct function calls
 # AI: Now uses strongly-typed PmcTask and PmcProject classes from models module
-# AI: REMOVED invalid 'using module' statement. Dependencies are now managed by _CLASSY-MAIN.ps1.
+# AI: FIX - Added explicit Import-Module for models to make class types available during parsing
+
+# AI: CRITICAL - Import models module for PowerShell 5.1 class type resolution
+Import-Module (Join-Path $PSScriptRoot "models.psm1") -Force
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # Module-level state variables
+# AI: FIX - Use generic object lists to avoid class type parsing errors
 $script:Data = @{
-    Projects = [System.Collections.Generic.List[PmcProject]]::new()
-    Tasks = [System.Collections.Generic.List[PmcTask]]::new()
+    Projects = [System.Collections.Generic.List[object]]::new()
+    Tasks = [System.Collections.Generic.List[object]]::new()
     TimeEntries = @()
     ActiveTimers = @{}
     TodoTemplates = @{}
@@ -336,7 +340,7 @@ function Update-PmcTask {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateNotNull()]
-        [PmcTask]$Task,
+        [object]$Task,
         
         [string]$Title,
         
@@ -356,6 +360,11 @@ function Update-PmcTask {
     )
     
     Invoke-WithErrorHandling -Component "DataManager.UpdateTask" -Context "Updating existing task" -ScriptBlock {
+        # AI: FIX - Runtime type validation since we removed compile-time type checking
+        if (-not ($Task.PSObject.TypeNames -contains 'PmcTask')) {
+            throw [ArgumentException]::new("Task parameter must be a PmcTask object")
+        }
+        
         # AI: Find task in list to ensure we're updating the managed instance
         $managedTask = $script:Data.Tasks | Where-Object { $_.Id -eq $Task.Id } | Select-Object -First 1
         
@@ -454,10 +463,15 @@ function Remove-PmcTask {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateNotNull()]
-        [PmcTask]$Task
+        [object]$Task
     )
     
     Invoke-WithErrorHandling -Component "DataManager.RemoveTask" -Context "Removing task from data store" -ScriptBlock {
+        # AI: FIX - Runtime type validation since we removed compile-time type checking
+        if (-not ($Task.PSObject.TypeNames -contains 'PmcTask')) {
+            throw [ArgumentException]::new("Task parameter must be a PmcTask object")
+        }
+        
         # AI: Find and remove task from strongly-typed list
         $taskToRemove = $script:Data.Tasks | Where-Object { $_.Id -eq $Task.Id } | Select-Object -First 1
         
@@ -591,10 +605,15 @@ function Add-PmcProject {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateNotNull()]
-        [PmcProject]$Project
+        [object]$Project
     )
     
     Invoke-WithErrorHandling -Component "DataManager.AddProject" -Context "Adding new project to data store" -ScriptBlock {
+        # AI: FIX - Runtime type validation since we removed compile-time type checking
+        if (-not ($Project.PSObject.TypeNames -contains 'PmcProject')) {
+            throw [ArgumentException]::new("Project parameter must be a PmcProject object")
+        }
+        
         # AI: Check if project with same key already exists
         $existing = $script:Data.Projects | Where-Object { $_.Key -eq $Project.Key } | Select-Object -First 1
         
@@ -628,7 +647,8 @@ function Add-PmcProject {
 
 #region DataManager Class Definition
 
-# AI: Maintain class-based interface for compatibility with existing code
+# AI: FIX - Maintain class-based interface for compatibility with existing code
+# AI: Removed type annotations from method signatures to avoid PowerShell 5.1 parsing issues
 class DataManager {
     hidden [hashtable] $DataStore
     hidden [string] $DataFilePath
@@ -649,15 +669,19 @@ class DataManager {
         Save-UnifiedData
     }
 
-    [PmcTask] AddTask([string]$Title, [string]$Description, [TaskPriority]$Priority, [string]$ProjectKey) {
-        return Add-PmcTask -Title $Title -Description $Description -Priority $Priority.ToString() -Category $ProjectKey
+    # AI: FIX - Removed [PmcTask] and [TaskPriority] type annotations to fix parsing errors
+    [object] AddTask([string]$Title, [string]$Description, [object]$Priority, [string]$ProjectKey) {
+        $priorityString = if ($Priority -is [string]) { $Priority } else { $Priority.ToString() }
+        return Add-PmcTask -Title $Title -Description $Description -Priority $priorityString -Category $ProjectKey
     }
     
-    [PmcTask[]] GetTasks() {
+    # AI: FIX - Removed [PmcTask[]] type annotation
+    [object[]] GetTasks() {
         return @($this.DataStore.Tasks)
     }
     
-    [PmcProject[]] GetProjects() {
+    # AI: FIX - Removed [PmcProject[]] type annotation
+    [object[]] GetProjects() {
         return @($this.DataStore.Projects)
     }
 }
@@ -726,7 +750,7 @@ function Initialize-DataManager {
 
 #endregion
 
-# Export public functions
+# Export public functions and classes
 Export-ModuleMember -Function @(
     'Initialize-DataManager',
     'Add-PmcTask',
@@ -738,4 +762,4 @@ Export-ModuleMember -Function @(
     'Add-PmcProject',
     'Save-UnifiedData',
     'Load-UnifiedData'
-)
+) -Variable @() -Alias @()
