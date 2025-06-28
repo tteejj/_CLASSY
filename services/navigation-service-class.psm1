@@ -3,9 +3,7 @@
 # AI: Updated with sophisticated navigation features from R2 version
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = \"Stop\"
-
-using namespace System.Collections.Generic
+$ErrorActionPreference = "Stop"
 
 #region Screen Factory Class for creating screen instances
 
@@ -15,7 +13,7 @@ class ScreenFactory {
     
     ScreenFactory([hashtable]$services) {
         if ($null -eq $services) {
-            throw [System.ArgumentNullException]::new(\"services\", \"Services cannot be null\")
+            throw [System.ArgumentNullException]::new("services", "Services cannot be null")
         }
         $this.Services = $services
         $this.RegisterDefaultScreens()
@@ -24,59 +22,56 @@ class ScreenFactory {
     hidden [void] RegisterDefaultScreens() {
         # AI: Register factory functions for both class-based and hashtable-based screens
         $this.ScreenTypes = @{
-            \"DashboardScreen\" = { param($services) $this.CreateClassBasedScreen(\"DashboardScreen\", $services) }
-            \"TaskListScreen\" = { param($services) $this.CreateClassBasedScreen(\"TaskListScreen\", $services) }
-            \"NewTaskScreen\" = { param($services) $this.CreateClassBasedScreen(\"NewTaskScreen\", $services) }
+            "DashboardScreen" = { param($services) $this.CreateClassBasedScreen("DashboardScreen", $services) }
+            "TaskListScreen" = { param($services) $this.CreateClassBasedScreen("TaskListScreen", $services) }
+            "NewTaskScreen" = { param($services) $this.CreateClassBasedScreen("NewTaskScreen", $services) }
         }
         
         # AI: Also support function-based screens for backward compatibility
-        if (Get-Command \"Get-DashboardScreen\" -ErrorAction SilentlyContinue) {
-            $this.ScreenTypes[\"DashboardScreen\"] = { param($services) Get-DashboardScreen -Services $services }
+        if (Get-Command "Get-DashboardScreen" -ErrorAction SilentlyContinue) {
+            $this.ScreenTypes["DashboardScreen"] = { param($services) Get-DashboardScreen -Services $services }
         }
-        if (Get-Command \"Get-TaskManagementScreen\" -ErrorAction SilentlyContinue) {
-            $this.ScreenTypes[\"TaskManagementScreen\"] = { param($services) Get-TaskManagementScreen -Services $services }
+        if (Get-Command "Get-TaskManagementScreen" -ErrorAction SilentlyContinue) {
+            $this.ScreenTypes["TaskManagementScreen"] = { param($services) Get-TaskManagementScreen -Services $services }
         }
     }
     
     hidden [object] CreateClassBasedScreen([string]$screenName, [hashtable]$services) {
-        # AI: Try to create class-based screen first, fallback to function-based
-        switch ($screenName) {
-            \"DashboardScreen\" {
-                if ([DashboardScreen] -as [type]) {
-                    return [DashboardScreen]::new($services)
-                }
-            }
-            \"TaskListScreen\" {
-                if ([TaskListScreen] -as [type]) {
-                    return [TaskListScreen]::new($services)
-                }
-            }
-            \"NewTaskScreen\" {
-                if ([NewTaskScreen] -as [type]) {
-                    return [NewTaskScreen]::new($services)
+        # AI: Try to create class-based screen dynamically, fallback to function-based
+        try {
+            # Attempt to get the type dynamically without hardcoding class names
+            $screenType = "$screenName" -as [type]
+            if ($screenType) {
+                # Check if the type has a constructor that takes services
+                $constructor = $screenType.GetConstructor([type[]]@([hashtable]))
+                if ($constructor) {
+                    return $screenType::new($services)
                 }
             }
         }
+        catch {
+            # Ignore type resolution errors and fall through to function-based approach
+        }
         
         # Fallback: try to find and call a function-based screen creator
-        $functionName = \"Get-$screenName\"
+        $functionName = "Get-$screenName"
         if (Get-Command $functionName -ErrorAction SilentlyContinue) {
             return & $functionName -Services $services
         }
         
-        throw [System.InvalidOperationException]::new(\"Unable to create screen: $screenName\")
+        throw [System.InvalidOperationException]::new("Unable to create screen: $screenName")
     }
     
     [void] RegisterScreen([string]$name, [scriptblock]$factory) {
         if ([string]::IsNullOrWhiteSpace($name)) {
-            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"name\")
+            throw [System.ArgumentException]::new("Screen name cannot be null or empty", "name")
         }
         if ($null -eq $factory) {
-            throw [System.ArgumentNullException]::new(\"factory\", \"Screen factory cannot be null\")
+            throw [System.ArgumentNullException]::new("factory", "Screen factory cannot be null")
         }
         
         $this.ScreenTypes[$name] = $factory
-        Write-Log -Level Debug -Message \"Registered screen factory: $name\"
+        Write-Log -Level Debug -Message "Registered screen factory: $name"
     }
     
     [object] CreateScreen([string]$screenName) {
@@ -85,13 +80,13 @@ class ScreenFactory {
     
     [object] CreateScreen([string]$screenName, [hashtable]$parameters) {
         if ([string]::IsNullOrWhiteSpace($screenName)) {
-            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+            throw [System.ArgumentException]::new("Screen name cannot be null or empty", "screenName")
         }
         
         if (-not $this.ScreenTypes.ContainsKey($screenName)) {
-            $availableScreens = ($this.ScreenTypes.Keys | Sort-Object) -join \", \"
+            $availableScreens = ($this.ScreenTypes.Keys | Sort-Object) -join ", "
             throw [System.InvalidOperationException]::new(
-                \"Unknown screen type: '$screenName'. Available screens: $availableScreens\"
+                "Unknown screen type: '$screenName'. Available screens: $availableScreens"
             )
         }
         
@@ -100,36 +95,36 @@ class ScreenFactory {
             $screen = & $factory -services $this.Services
             
             if ($null -eq $screen) {
-                throw [System.InvalidOperationException]::new(\"Screen factory returned null for '$screenName'\")
+                throw [System.InvalidOperationException]::new("Screen factory returned null for '$screenName'")
             }
             
             # Store services reference on screen for later use
             if ($screen -is [hashtable] -and -not $screen._services) {
                 $screen._services = $this.Services
             }
-            elseif ($screen.PSObject.Properties.Name -contains \"Services\" -and -not $screen.Services) {
+            elseif ($screen.PSObject.Properties.Name -contains "Services" -and -not $screen.Services) {
                 $screen.Services = $this.Services
             }
             
             # Apply parameters to screen state
             if ($parameters -and $parameters.Count -gt 0) {
-                if ($screen -is [hashtable] -and $screen.ContainsKey(\"State\")) {
+                if ($screen -is [hashtable] -and $screen.ContainsKey("State")) {
                     foreach ($key in $parameters.Keys) {
                         $screen.State[$key] = $parameters[$key]
                     }
                 }
-                elseif ($screen.PSObject.Properties.Name -contains \"State\") {
+                elseif ($screen.PSObject.Properties.Name -contains "State") {
                     foreach ($key in $parameters.Keys) {
                         $screen.State[$key] = $parameters[$key]
                     }
                 }
             }
             
-            Write-Log -Level Debug -Message \"Created screen: $screenName\"
+            Write-Log -Level Debug -Message "Created screen: $screenName"
             return $screen
         }
         catch {
-            Write-Log -Level Error -Message \"Failed to create screen '$screenName': $_\"
+            Write-Log -Level Error -Message "Failed to create screen '$screenName': $_"
             throw
         }
     }
@@ -150,7 +145,7 @@ class NavigationService {
     
     NavigationService([hashtable]$services) {
         if ($null -eq $services) {
-            throw [System.ArgumentNullException]::new(\"services\", \"Services cannot be null\")
+            throw [System.ArgumentNullException]::new("services", "Services cannot be null")
         }
         
         $this.Services = $services
@@ -158,29 +153,29 @@ class NavigationService {
         $this.ScreenFactory = [ScreenFactory]::new($services)
         $this.InitializeRoutes()
         
-        Write-Log -Level Info -Message \"NavigationService initialized\"
+        Write-Log -Level Info -Message "NavigationService initialized"
     }
     
     hidden [void] InitializeRoutes() {
         # AI: Map URL-like paths to screen names
         $this.RouteMap = @{
-            \"/\" = \"DashboardScreen\"
-            \"/dashboard\" = \"DashboardScreen\"
-            \"/tasks\" = \"TaskListScreen\"
-            \"/new-task\" = \"NewTaskScreen\"
+            "/" = "DashboardScreen"
+            "/dashboard" = "DashboardScreen"
+            "/tasks" = "TaskListScreen"
+            "/new-task" = "NewTaskScreen"
         }
     }
     
     [void] RegisterRoute([string]$path, [string]$screenName) {
         if ([string]::IsNullOrWhiteSpace($path)) {
-            throw [System.ArgumentException]::new(\"Route path cannot be null or empty\", \"path\")
+            throw [System.ArgumentException]::new("Route path cannot be null or empty", "path")
         }
         if ([string]::IsNullOrWhiteSpace($screenName)) {
-            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+            throw [System.ArgumentException]::new("Screen name cannot be null or empty", "screenName")
         }
         
         $this.RouteMap[$path] = $screenName
-        Write-Log -Level Debug -Message \"Registered route: $path -> $screenName\"
+        Write-Log -Level Debug -Message "Registered route: $path -> $screenName"
     }
     
     [void] PushScreen([string]$screenName) {
@@ -188,28 +183,28 @@ class NavigationService {
     }
     
     [void] PushScreen([string]$screenName, [hashtable]$parameters) {
-        Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"PushScreen:$screenName\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "NavigationService" -Context "PushScreen:$screenName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($screenName)) {
-                throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+                throw [System.ArgumentException]::new("Screen name cannot be null or empty", "screenName")
             }
             
             # Check stack depth limit
             if ($this.ScreenStack.Count -ge $this.MaxStackDepth) {
                 throw [System.InvalidOperationException]::new(
-                    \"Navigation stack depth limit reached ($($this.MaxStackDepth))\"
+                    "Navigation stack depth limit reached ($($this.MaxStackDepth))"
                 )
             }
             
-            Write-Log -Level Info -Message \"Pushing screen: $screenName\"
+            Write-Log -Level Info -Message "Pushing screen: $screenName"
             
             # Handle current screen exit
             if ($null -ne $this.CurrentScreen) {
                 try {
-                    $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                    $this.CallScreenMethod($this.CurrentScreen, "OnExit")
                     $this.ScreenStack.Push($this.CurrentScreen)
                 }
                 catch {
-                    Write-Log -Level Warning -Message \"Error during current screen cleanup: $_\"
+                    Write-Log -Level Warning -Message "Error during current screen cleanup: $_"
                 }
             }
             
@@ -221,31 +216,31 @@ class NavigationService {
             
             # Initialize the new screen
             try {
-                $this.CallScreenMethod($newScreen, \"Initialize\", $this.Services)
-                $this.CallScreenMethod($newScreen, \"OnEnter\")
+                $this.CallScreenMethod($newScreen, "Initialize", $this.Services)
+                $this.CallScreenMethod($newScreen, "OnEnter")
             }
             catch {
-                Write-Log -Level Error -Message \"Failed to initialize screen '$screenName': $_\"
+                Write-Log -Level Error -Message "Failed to initialize screen '$screenName': $_"
                 throw
             }
             
             # Track navigation history
-            $this.TrackNavigation($screenName, \"Push\")
+            $this.TrackNavigation($screenName, "Push")
             
             # Update TUI state if available
             if ($global:TuiState) {
                 $global:TuiState.CurrentScreen = $newScreen
-                if (Get-Command \"Request-TuiRefresh\" -ErrorAction SilentlyContinue) {
+                if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
                     Request-TuiRefresh
                 }
             }
             
             # Publish navigation event
-            if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+            if (Get-Command "Publish-Event" -ErrorAction SilentlyContinue) {
                 # AI: Ensure event data is serializable
                 $eventData = @{
                     Screen = $screenName
-                    Action = \"Push\"
+                    Action = "Push"
                     StackDepth = $this.ScreenStack.Count + 1
                 }
                 
@@ -263,29 +258,29 @@ class NavigationService {
                     }
                 }
                 
-                Publish-Event -EventName \"Navigation.ScreenChanged\" -Data $eventData
+                Publish-Event -EventName "Navigation.ScreenChanged" -Data $eventData
             }
             
-            Write-Log -Level Debug -Message \"Screen '$screenName' pushed successfully. Stack depth: $($this.ScreenStack.Count + 1)\"
+            Write-Log -Level Debug -Message "Screen '$screenName' pushed successfully. Stack depth: $($this.ScreenStack.Count + 1)"
         }
     }
     
     [bool] PopScreen() {
-        return Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"PopScreen\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "NavigationService" -Context "PopScreen" -ScriptBlock {
             if ($this.ScreenStack.Count -eq 0) {
-                Write-Log -Level Warning -Message \"Cannot pop screen: stack is empty\"
+                Write-Log -Level Warning -Message "Cannot pop screen: stack is empty"
                 return $false
             }
             
-            Write-Log -Level Info -Message \"Popping screen\"
+            Write-Log -Level Info -Message "Popping screen"
             
             # Exit current screen
             if ($null -ne $this.CurrentScreen) {
                 try {
-                    $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                    $this.CallScreenMethod($this.CurrentScreen, "OnExit")
                 }
                 catch {
-                    Write-Log -Level Warning -Message \"Error during screen exit: $_\"
+                    Write-Log -Level Warning -Message "Error during screen exit: $_"
                 }
             }
             
@@ -295,32 +290,32 @@ class NavigationService {
             # Resume previous screen
             if ($null -ne $this.CurrentScreen) {
                 try {
-                    $this.CallScreenMethod($this.CurrentScreen, \"OnResume\")
+                    $this.CallScreenMethod($this.CurrentScreen, "OnResume")
                 }
                 catch {
-                    Write-Log -Level Warning -Message \"Error during screen resume: $_\"
+                    Write-Log -Level Warning -Message "Error during screen resume: $_"
                 }
                 
                 # Update TUI state
                 if ($global:TuiState) {
                     $global:TuiState.CurrentScreen = $this.CurrentScreen
-                    if (Get-Command \"Request-TuiRefresh\" -ErrorAction SilentlyContinue) {
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
                         Request-TuiRefresh
                     }
                 }
             }
             
             # Publish event
-            if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+            if (Get-Command "Publish-Event" -ErrorAction SilentlyContinue) {
                 $screenName = if ($this.CurrentScreen -is [hashtable] -and $this.CurrentScreen.Name) {
                     $this.CurrentScreen.Name
-                } elseif ($this.CurrentScreen.PSObject.Properties.Name -contains \"Name\") {
+                } elseif ($this.CurrentScreen.PSObject.Properties.Name -contains "Name") {
                     $this.CurrentScreen.Name
                 } else {
                     $null
                 }
                 
-                Publish-Event -EventName \"Navigation.ScreenPopped\" -Data @{
+                Publish-Event -EventName "Navigation.ScreenPopped" -Data @{
                     CurrentScreen = $screenName
                     StackDepth = $this.ScreenStack.Count
                 }
@@ -335,23 +330,23 @@ class NavigationService {
     }
     
     [bool] GoTo([string]$path, [hashtable]$parameters) {
-        return Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"GoTo:$path\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "NavigationService" -Context "GoTo:$path" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($path)) {
-                throw [System.ArgumentException]::new(\"Navigation path cannot be null or empty\", \"path\")
+                throw [System.ArgumentException]::new("Navigation path cannot be null or empty", "path")
             }
             
-            Write-Log -Level Info -Message \"Navigating to path: $path\"
+            Write-Log -Level Info -Message "Navigating to path: $path"
             
             # Handle special cases
-            if ($path -eq \"/exit\") {
+            if ($path -eq "/exit") {
                 $this.RequestExit()
                 return $true
             }
             
             # Map path to screen name
             if (-not $this.RouteMap.ContainsKey($path)) {
-                $availableRoutes = ($this.RouteMap.Keys | Sort-Object) -join \", \"
-                Write-Log -Level Warning -Message \"Unknown navigation path: $path. Available routes: $availableRoutes\"
+                $availableRoutes = ($this.RouteMap.Keys | Sort-Object) -join ", "
+                Write-Log -Level Warning -Message "Unknown navigation path: $path. Available routes: $availableRoutes"
                 return $false
             }
             
@@ -362,14 +357,14 @@ class NavigationService {
                 return $true
             }
             catch {
-                Write-Log -Level Error -Message \"Failed to navigate to '$screenName' via path '$path': $_\"
+                Write-Log -Level Error -Message "Failed to navigate to '$screenName' via path '$path': $_"
                 return $false
             }
         }
     }
     
     [void] RequestExit() {
-        Write-Log -Level Info -Message \"Exit requested\"
+        Write-Log -Level Info -Message "Exit requested"
         
         # Clean up all screens
         while ($this.ScreenStack.Count -gt 0) {
@@ -377,28 +372,28 @@ class NavigationService {
                 $this.PopScreen()
             }
             catch {
-                Write-Log -Level Warning -Message \"Error during exit cleanup: $_\"
+                Write-Log -Level Warning -Message "Error during exit cleanup: $_"
             }
         }
         
         # Exit current screen
         if ($null -ne $this.CurrentScreen) {
             try {
-                $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                $this.CallScreenMethod($this.CurrentScreen, "OnExit")
             }
             catch {
-                Write-Log -Level Warning -Message \"Error during final screen cleanup: $_\"
+                Write-Log -Level Warning -Message "Error during final screen cleanup: $_"
             }
         }
         
         # Stop TUI engine if available
-        if (Get-Command \"Stop-TuiEngine\" -ErrorAction SilentlyContinue) {
+        if (Get-Command "Stop-TuiEngine" -ErrorAction SilentlyContinue) {
             Stop-TuiEngine
         }
         
         # Publish exit event
-        if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
-            Publish-Event -EventName \"Application.Exit\" -Data @{}
+        if (Get-Command "Publish-Event" -ErrorAction SilentlyContinue) {
+            Publish-Event -EventName "Application.Exit" -Data @{}
         }
     }
     
@@ -453,7 +448,7 @@ class NavigationService {
             }
         }
         catch {
-            Write-Log -Level Warning -Message \"Error calling screen method '$methodName': $_\"
+            Write-Log -Level Warning -Message "Error calling screen method '$methodName': $_"
         }
     }
     
@@ -471,7 +466,7 @@ class NavigationService {
         $this.NavigationHistory[$screenName].VisitCount++
         $this.NavigationHistory[$screenName].LastVisit = $timestamp
         
-        Write-Log -Level Debug -Message \"Tracked navigation: $screenName ($action)\"
+        Write-Log -Level Debug -Message "Tracked navigation: $screenName ($action)"
     }
 }
 
@@ -482,11 +477,11 @@ function Initialize-NavigationService {
     param([hashtable]$Services)
     
     if (-not $Services) {
-        throw [System.ArgumentNullException]::new(\"Services\", \"Services parameter is required\")
+        throw [System.ArgumentNullException]::new("Services", "Services parameter is required")
     }
     
     return [NavigationService]::new($Services)
 }
 
 # Export the functions and classes
-Export-ModuleMember -Function Initialize-NavigationService -Class 'NavigationService', 'ScreenFactory'"
+Export-ModuleMember -Function Initialize-NavigationService

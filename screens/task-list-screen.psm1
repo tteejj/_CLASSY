@@ -3,7 +3,8 @@
 # Displays and manages tasks.
 # ==============================================================================
 
-using namespace System.Collections.Generic
+# Import models for Task and enum types
+using module '..\modules\models.psm1'
 
 # Import base classes and components
 using module '..\components\ui-classes.psm1'

@@ -1,3 +1,1599 @@
+####\components\advanced-data-components.psm1
+# Advanced Data Components Module for PMC Terminal v5
+# Enhanced data display components with sorting, filtering, and pagination
+# AI: Class-based implementation following CLASSY architecture patterns
+
+using module '..\components\ui-classes.psm1'
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# Import utilities for error handling
+Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
+
+#region Advanced Data Table Class
+
+class DataTableComponent : UIElement {
+    [hashtable[]] $Data = @()
+    [hashtable[]] $Columns = @()
+    [int] $X = 0
+    [int] $Y = 0
+    [int] $Width = 80
+    [int] $Height = 20
+    [string] $Title = "Data Table"
+    [bool] $ShowBorder = $true
+    [bool] $IsFocusable = $true
+    [int] $SelectedRow = 0
+    [int] $ScrollOffset = 0
+    [string] $SortColumn = $null
+    [string] $SortDirection = "Ascending"
+    [string] $FilterText = ""
+    [string] $FilterColumn = $null
+    [int] $PageSize = 0  # 0 = auto-calculate
+    [int] $CurrentPage = 0
+    [bool] $ShowHeader = $true
+    [bool] $ShowFooter = $true
+    [bool] $ShowRowNumbers = $false
+    [bool] $AllowSort = $true
+    [bool] $AllowFilter = $true
+    [bool] $AllowSelection = $true
+    [bool] $MultiSelect = $false
+    [int[]] $SelectedRows = @()
+    [hashtable[]] $FilteredData = @()
+    [hashtable[]] $ProcessedData = @()
+    [bool] $FilterMode = $false
+    hidden [int] $_lastRenderedWidth = 0
+    hidden [int] $_lastRenderedHeight = 0
+    
+    # Event handlers
+    [scriptblock] $OnRowSelect = $null
+    [scriptblock] $OnSelectionChange = $null
+    
+    DataTableComponent([string]$name) : base($name) {
+        $this.IsFocusable = $true
+    }
+    
+    DataTableComponent([string]$name, [hashtable[]]$data, [hashtable[]]$columns) : base($name) {
+        $this.IsFocusable = $true
+        $this.Data = $data
+        $this.Columns = $columns
+        $this.ProcessData()
+    }
+    
+    [void] ProcessData() {
+        Invoke-WithErrorHandling -Component "$($this.Name).ProcessData" -Context "Processing table data" -ScriptBlock {
+            # Filter data
+            if ([string]::IsNullOrWhiteSpace($this.FilterText)) {
+                $this.FilteredData = $this.Data
+            } else {
+                if ($this.FilterColumn) {
+                    # Filter specific column
+                    $this.FilteredData = @($this.Data | Where-Object {
+                        $value = $_."$($this.FilterColumn)"
+                        $value -and $value.ToString() -like "*$($this.FilterText)*"
+                    })
+                } else {
+                    # Filter all columns
+                    $this.FilteredData = @($this.Data | Where-Object {
+                        $row = $_
+                        $matched = $false
+                        foreach ($col in $this.Columns) {
+                            if ($col.Filterable -ne $false) {
+                                $value = $row."$($col.Name)"
+                                if ($value -and $value.ToString() -like "*$($this.FilterText)*") {
+                                    $matched = $true
+                                    break
+                                }
+                            }
+                        }
+                        $matched
+                    })
+                }
+            }
+            
+            # Sort data
+            if ($this.SortColumn -and $this.AllowSort) {
+                $this.ProcessedData = $this.FilteredData | Sort-Object -Property $this.SortColumn -Descending:($this.SortDirection -eq "Descending")
+            } else {
+                $this.ProcessedData = $this.FilteredData
+            }
+            
+            # Reset selection if needed
+            if ($this.SelectedRow -ge $this.ProcessedData.Count) {
+                $this.SelectedRow = [Math]::Max(0, $this.ProcessedData.Count - 1)
+            }
+            
+            # Calculate page size if auto
+            if ($this.PageSize -eq 0) {
+                $headerLines = if ($this.ShowHeader) { 3 } else { 0 }
+                $footerLines = if ($this.ShowFooter) { 2 } else { 0 }
+                $filterLines = if ($this.AllowFilter) { 2 } else { 0 }
+                $borderAdjust = if ($this.ShowBorder) { 2 } else { 0 }
+                $calculatedPageSize = $this.Height - $headerLines - $footerLines - $filterLines - $borderAdjust
+                $this.PageSize = [Math]::Max(1, $calculatedPageSize)
+            }
+            
+            # Adjust current page
+            $totalPages = [Math]::Ceiling($this.ProcessedData.Count / [Math]::Max(1, $this.PageSize))
+            if ($this.CurrentPage -ge $totalPages) {
+                $this.CurrentPage = [Math]::Max(0, $totalPages - 1)
+            }
+        }
+    }
+    
+    [hashtable] GetContentBounds() {
+        $borderOffset = if ($this.ShowBorder) { 1 } else { 0 }
+        return @{
+            X = $this.X + $borderOffset
+            Y = $this.Y + $borderOffset
+            Width = $this.Width - (2 * $borderOffset)
+            Height = $this.Height - (2 * $borderOffset)
+        }
+    }
+    
+    hidden [string] _RenderContent() {
+        $renderedContent = [System.Text.StringBuilder]::new()
+        
+        # Force ProcessData if dimensions changed
+        if ($this._lastRenderedWidth -ne $this.Width -or $this._lastRenderedHeight -ne $this.Height) {
+            $this.ProcessData()
+            $this._lastRenderedWidth = $this.Width
+            $this._lastRenderedHeight = $this.Height
+        }
+        
+        # Calculate content area based on border settings
+        if ($this.ShowBorder) {
+            $borderColor = if ($this.IsFocusable -and $this.IsFocused) { 
+                Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+            } else { 
+                Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
+            }
+            
+            [void]$renderedContent.Append($this.MoveCursor($this.X, $this.Y))
+            [void]$renderedContent.Append($this.SetColor($borderColor))
+            [void]$renderedContent.Append($this.RenderBorder($this.Title))
+            
+            # Adjust content area for border
+            $contentX = $this.X + 1
+            $contentY = $this.Y + 1
+            $contentWidth = $this.Width - 2
+            $contentHeight = $this.Height - 2
+        } else {
+            # No border, use full dimensions
+            $contentX = $this.X
+            $contentY = $this.Y
+            $contentWidth = $this.Width
+            $contentHeight = $this.Height
+        }
+        
+        $currentY = $contentY
+        
+        # Filter bar
+        if ($this.AllowFilter) {
+            [void]$renderedContent.Append($this.MoveCursor($contentX + 1, $currentY))
+            [void]$renderedContent.Append($this.SetColor([ConsoleColor]::White))
+            [void]$renderedContent.Append("Filter: ")
+            
+            $filterDisplayText = if ($this.FilterText) { $this.FilterText } else { "Type to filter..." }
+            $filterColor = if ($this.FilterText) { [ConsoleColor]::Yellow } else { [ConsoleColor]::DarkGray }
+            [void]$renderedContent.Append($this.SetColor($filterColor))
+            [void]$renderedContent.Append($filterDisplayText)
+            
+            $currentY += 2
+        }
+        
+        # Calculate column widths
+        $totalDefinedWidth = ($this.Columns | Where-Object { $_.Width } | Measure-Object -Property Width -Sum).Sum
+        if ($null -eq $totalDefinedWidth) { $totalDefinedWidth = 0 }
+        $flexColumns = @($this.Columns | Where-Object { -not $_.Width })
+        $columnSeparators = if ($this.Columns.Count -gt 1) { $this.Columns.Count - 1 } else { 0 }
+        $rowNumberWidth = if ($this.ShowRowNumbers) { 5 } else { 0 }
+        $remainingWidth = $contentWidth - $totalDefinedWidth - $rowNumberWidth - $columnSeparators
+        
+        $flexWidth = 0
+        if ($flexColumns.Count -gt 0) {
+            $flexWidth = [Math]::Floor($remainingWidth / $flexColumns.Count)
+        }
+        
+        # Assign calculated widths
+        foreach ($col in $this.Columns) {
+            if ($col.Width) {
+                $col.CalculatedWidth = $col.Width
+            } else {
+                $col.CalculatedWidth = [Math]::Max(5, $flexWidth)
+            }
+        }
+        
+        # Header
+        if ($this.ShowHeader) {
+            $headerX = $contentX
+            
+            # Row number header
+            if ($this.ShowRowNumbers) {
+                [void]$renderedContent.Append($this.MoveCursor($headerX, $currentY))
+                [void]$renderedContent.Append($this.SetColor([ConsoleColor]::Cyan))
+                [void]$renderedContent.Append("#".PadRight(4))
+                $headerX += 5
+            }
+            
+            # Column headers
+            foreach ($col in $this.Columns) {
+                $headerText = if ($col.Header) { $col.Header } else { $col.Name }
+                $width = $col.CalculatedWidth
+                
+                # Add sort indicator
+                if ($this.AllowSort -and $col.Sortable -ne $false -and $col.Name -eq $this.SortColumn) {
+                    $sortIndicator = if ($this.SortDirection -eq "Ascending") { "▲" } else { "▼" }
+                    $headerText = "$headerText $sortIndicator"
+                }
+                
+                # Truncate if needed
+                if ($headerText.Length -gt $width) {
+                    $maxLength = [Math]::Max(0, $width - 3)
+                    $headerText = $headerText.Substring(0, $maxLength) + "..."
+                }
+                
+                # Align header
+                if ($col.Align -eq "Right") {
+                    $alignedText = $headerText.PadLeft($width)
+                } elseif ($col.Align -eq "Center") {
+                    $padding = $width - $headerText.Length
+                    $leftPad = [Math]::Floor($padding / 2)
+                    $rightPad = $padding - $leftPad
+                    $alignedText = " " * $leftPad + $headerText + " " * $rightPad
+                } else {
+                    $alignedText = $headerText.PadRight($width)
+                }
+                
+                [void]$renderedContent.Append($this.MoveCursor($headerX, $currentY))
+                [void]$renderedContent.Append($this.SetColor([ConsoleColor]::Cyan))
+                [void]$renderedContent.Append($alignedText)
+                
+                $headerX += $width + 1
+            }
+            
+            $currentY++
+            
+            # Header separator
+            [void]$renderedContent.Append($this.MoveCursor($contentX, $currentY))
+            [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
+            [void]$renderedContent.Append("─" * $contentWidth)
+            $currentY++
+        }
+        
+        # Data rows
+        $dataToRender = if ($this.ProcessedData.Count -eq 0 -and $this.Data.Count -gt 0) {
+            $this.Data
+        } else {
+            $this.ProcessedData
+        }
+        
+        $startIdx = $this.CurrentPage * $this.PageSize
+        $endIdx = [Math]::Min($startIdx + $this.PageSize - 1, $dataToRender.Count - 1)
+        
+        for ($i = $startIdx; $i -le $endIdx; $i++) {
+            $row = $dataToRender[$i]
+            $rowX = $contentX
+            
+            # Selection highlighting
+            $isSelected = if ($this.MultiSelect) {
+                $this.SelectedRows -contains $i
+            } else {
+                $i -eq $this.SelectedRow
+            }
+            
+            $rowBg = if ($isSelected) { [ConsoleColor]::Cyan } else { [ConsoleColor]::Black }
+            $rowFg = if ($isSelected) { [ConsoleColor]::Black } else { [ConsoleColor]::White }
+            
+            # Clear row background if selected
+            if ($isSelected) {
+                [void]$renderedContent.Append($this.MoveCursor($rowX, $currentY))
+                [void]$renderedContent.Append($this.SetBackgroundColor($rowBg))
+                [void]$renderedContent.Append(" " * $contentWidth)
+            }
+            
+            # Row number
+            if ($this.ShowRowNumbers) {
+                [void]$renderedContent.Append($this.MoveCursor($rowX, $currentY))
+                [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
+                [void]$renderedContent.Append($this.SetBackgroundColor($rowBg))
+                [void]$renderedContent.Append(($i + 1).ToString().PadRight(4))
+                $rowX += 5
+            }
+            
+            # Cell data
+            foreach ($col in $this.Columns) {
+                $value = $row."$($col.Name)"
+                $width = $col.CalculatedWidth
+                
+                # Format value
+                $displayValue = if ($col.Format -and $value -ne $null) {
+                    & $col.Format $value
+                } elseif ($value -ne $null) {
+                    $value.ToString()
+                } else {
+                    ""
+                }
+                
+                # Truncate if needed
+                if ($displayValue.Length -gt $width) {
+                    $maxLength = [Math]::Max(0, $width - 3)
+                    if ($maxLength -le 0) {
+                        $displayValue = "..."
+                    } else {
+                        $displayValue = $displayValue.Substring(0, $maxLength) + "..."
+                    }
+                }
+                
+                # Align value
+                if ($col.Align -eq "Right") {
+                    $alignedValue = $displayValue.PadLeft($width)
+                } elseif ($col.Align -eq "Center") {
+                    $padding = $width - $displayValue.Length
+                    $leftPad = [Math]::Floor($padding / 2)
+                    $rightPad = $padding - $leftPad
+                    $alignedValue = " " * $leftPad + $displayValue + " " * $rightPad
+                } else {
+                    $alignedValue = $displayValue.PadRight($width)
+                }
+                
+                # Determine color
+                $cellFg = if ($col.Color -and -not $isSelected) {
+                    $colorName = & $col.Color $value $row
+                    Get-ThemeColor $colorName -Default ([ConsoleColor]::White)
+                } else {
+                    $rowFg
+                }
+                
+                [void]$renderedContent.Append($this.MoveCursor($rowX, $currentY))
+                [void]$renderedContent.Append($this.SetColor($cellFg))
+                [void]$renderedContent.Append($this.SetBackgroundColor($rowBg))
+                [void]$renderedContent.Append($alignedValue)
+                
+                $rowX += $width + 1
+            }
+            
+            $currentY++
+        }
+        
+        # Empty state
+        if ($dataToRender.Count -eq 0) {
+            $emptyMessage = if ($this.FilterText) {
+                "No results match the filter"
+            } else {
+                "No data to display"
+            }
+            $msgX = $contentX + [Math]::Floor(($contentWidth - $emptyMessage.Length) / 2)
+            $msgY = $contentY + [Math]::Floor($contentHeight / 2)
+            [void]$renderedContent.Append($this.MoveCursor($msgX, $msgY))
+            [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
+            [void]$renderedContent.Append($emptyMessage)
+        }
+        
+        # Footer
+        if ($this.ShowFooter) {
+            $footerY = $contentY + $contentHeight - 1
+            
+            # Status
+            $statusText = "$($dataToRender.Count) rows"
+            if ($this.FilterText) {
+                $statusText += " (filtered from $($this.Data.Count))"
+            }
+            if ($this.MultiSelect) {
+                $statusText += " | $($this.SelectedRows.Count) selected"
+            }
+            [void]$renderedContent.Append($this.MoveCursor($contentX + 1, $footerY))
+            [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
+            [void]$renderedContent.Append($statusText)
+            
+            # Pagination
+            if ($dataToRender.Count -gt $this.PageSize) {
+                $totalPages = [Math]::Ceiling($dataToRender.Count / [Math]::Max(1, $this.PageSize))
+                $pageText = "Page $($this.CurrentPage + 1)/$totalPages"
+                [void]$renderedContent.Append($this.MoveCursor($contentX + $contentWidth - $pageText.Length - 1, $footerY))
+                [void]$renderedContent.Append($this.SetColor([ConsoleColor]::Blue))
+                [void]$renderedContent.Append($pageText)
+            }
+        }
+        
+        [void]$renderedContent.Append($this.ResetColor())
+        return $renderedContent.ToString()
+    }
+    
+    [bool] HandleInput([System.ConsoleKeyInfo]$key) {
+        # Filter mode
+        if ($key.Modifiers -band [ConsoleModifiers]::Control) {
+            switch ($key.Key) {
+                ([ConsoleKey]::F) {
+                    $this.FilterMode = -not $this.FilterMode
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                        Request-TuiRefresh
+                    }
+                    return $true
+                }
+                ([ConsoleKey]::S) {
+                    if ($this.AllowSort) {
+                        $sortableCols = @($this.Columns | Where-Object { $_.Sortable -ne $false })
+                        if ($sortableCols.Count -gt 0) {
+                            $currentIdx = [array]::IndexOf($sortableCols.Name, $this.SortColumn)
+                            $nextIdx = ($currentIdx + 1) % $sortableCols.Count
+                            $this.SortColumn = $sortableCols[$nextIdx].Name
+                            $this.ProcessData()
+                            if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                                Request-TuiRefresh
+                            }
+                        }
+                    }
+                    return $true
+                }
+            }
+        }
+        
+        # Filter text input
+        if ($this.FilterMode) {
+            switch ($key.Key) {
+                ([ConsoleKey]::Escape) {
+                    $this.FilterMode = $false
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                        Request-TuiRefresh
+                    }
+                    return $true
+                }
+                ([ConsoleKey]::Enter) {
+                    $this.FilterMode = $false
+                    $this.ProcessData()
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                        Request-TuiRefresh
+                    }
+                    return $true
+                }
+                ([ConsoleKey]::Backspace) {
+                    if ($this.FilterText.Length -gt 0) {
+                        $this.FilterText = $this.FilterText.Substring(0, $this.FilterText.Length - 1)
+                        $this.ProcessData()
+                        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                            Request-TuiRefresh
+                        }
+                    }
+                    return $true
+                }
+                default {
+                    if ($key.KeyChar -and -not [char]::IsControl($key.KeyChar)) {
+                        $this.FilterText += $key.KeyChar
+                        $this.ProcessData()
+                        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                }
+            }
+            return $false
+        }
+        
+        # Normal navigation
+        switch ($key.Key) {
+            ([ConsoleKey]::UpArrow) {
+                if ($this.SelectedRow -gt 0) {
+                    $this.SelectedRow--
+                    if ($this.SelectedRow -lt ($this.CurrentPage * $this.PageSize)) {
+                        $this.CurrentPage--
+                    }
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                        Request-TuiRefresh
+                    }
+                }
+                return $true
+            }
+            ([ConsoleKey]::DownArrow) {
+                if ($this.SelectedRow -lt ($this.ProcessedData.Count - 1)) {
+                    $this.SelectedRow++
+                    if ($this.SelectedRow -ge (($this.CurrentPage + 1) * $this.PageSize)) {
+                        $this.CurrentPage++
+                    }
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+                        Request-TuiRefresh
+                    }
+                }
+                return $true
+            }
+            ([ConsoleKey]::Enter) {
+                if ($this.OnRowSelect -and $this.ProcessedData.Count -gt 0) {
+                    $selectedData = if ($this.MultiSelect) {
+                        @($this.SelectedRows | ForEach-Object { $this.ProcessedData[$_] })
+                    } else {
+                        $this.ProcessedData[$this.SelectedRow]
+                    }
+                    & $this.OnRowSelect $selectedData $this.SelectedRow
+                }
+                return $true
+            }
+        }
+        
+        return $false
+    }
+    
+    # Helper methods for ANSI escape sequences
+    hidden [string] MoveCursor([int]$x, [int]$y) {
+        return "`e[$($y + 1);$($x + 1)H"
+    }
+    
+    hidden [string] SetColor([ConsoleColor]$color) {
+        $colorMap = @{
+            'Black' = 30; 'DarkRed' = 31; 'DarkGreen' = 32; 'DarkYellow' = 33
+            'DarkBlue' = 34; 'DarkMagenta' = 35; 'DarkCyan' = 36; 'Gray' = 37
+            'DarkGray' = 90; 'Red' = 91; 'Green' = 92; 'Yellow' = 93
+            'Blue' = 94; 'Magenta' = 95; 'Cyan' = 96; 'White' = 97
+        }
+        $colorCode = $colorMap[$color.ToString()]
+        return "`e[${colorCode}m"
+    }
+    
+    hidden [string] SetBackgroundColor([ConsoleColor]$color) {
+        $colorMap = @{
+            'Black' = 40; 'DarkRed' = 41; 'DarkGreen' = 42; 'DarkYellow' = 43
+            'DarkBlue' = 44; 'DarkMagenta' = 45; 'DarkCyan' = 46; 'Gray' = 47
+            'DarkGray' = 100; 'Red' = 101; 'Green' = 102; 'Yellow' = 103
+            'Blue' = 104; 'Magenta' = 105; 'Cyan' = 106; 'White' = 107
+        }
+        $colorCode = $colorMap[$color.ToString()]
+        return "`e[${colorCode}m"
+    }
+    
+    hidden [string] ResetColor() {
+        return "`e[0m"
+    }
+    
+    hidden [string] RenderBorder([string]$title) {
+        $borderBuilder = [System.Text.StringBuilder]::new()
+        
+        # Top border
+        [void]$borderBuilder.Append("┌")
+        
+        if (-not [string]::IsNullOrWhiteSpace($title)) {
+            $titleText = " $title "
+            $horizontalSpace = $this.Width - 2
+            if ($titleText.Length -gt $horizontalSpace) {
+                $titleText = $titleText.Substring(0, $horizontalSpace)
+            }
+            
+            $paddingBefore = [Math]::Floor(($horizontalSpace - $titleText.Length) / 2)
+            $paddingAfter = $horizontalSpace - $titleText.Length - $paddingBefore
+            
+            [void]$borderBuilder.Append("─" * $paddingBefore)
+            [void]$borderBuilder.Append($titleText)
+            [void]$borderBuilder.Append("─" * $paddingAfter)
+        } else {
+            [void]$borderBuilder.Append("─" * ($this.Width - 2))
+        }
+        
+        [void]$borderBuilder.Append("┐")
+        
+        # Side borders
+        for ($row = 1; $row -lt $this.Height - 1; $row++) {
+            [void]$borderBuilder.Append($this.MoveCursor($this.X, $this.Y + $row))
+            [void]$borderBuilder.Append("│")
+            [void]$borderBuilder.Append($this.MoveCursor($this.X + $this.Width - 1, $this.Y + $row))
+            [void]$borderBuilder.Append("│")
+        }
+        
+        # Bottom border
+        [void]$borderBuilder.Append($this.MoveCursor($this.X, $this.Y + $this.Height - 1))
+        [void]$borderBuilder.Append("└")
+        [void]$borderBuilder.Append("─" * ($this.Width - 2))
+        [void]$borderBuilder.Append("┘")
+        
+        return $borderBuilder.ToString()
+    }
+    
+    # Public methods
+    [void] RefreshData() {
+        $this.ProcessData()
+        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+            Request-TuiRefresh
+        }
+    }
+    
+    [void] SetData([hashtable[]]$data) {
+        $this.Data = $data
+        $this.ProcessData()
+        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+            Request-TuiRefresh
+        }
+    }
+    
+    [void] SetColumns([hashtable[]]$columns) {
+        $this.Columns = $columns
+        $this.ProcessData()
+        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
+            Request-TuiRefresh
+        }
+    }
+}
+
+#endregion
+
+#region Factory Functions for Backward Compatibility
+
+function global:New-TuiDataTable {
+    param([hashtable]$Props = @{})
+    
+    $name = if ($Props.Name) { $Props.Name } else { "DataTable_$([Guid]::NewGuid().ToString('N').Substring(0,8))" }
+    $data = if ($Props.Data) { $Props.Data } else { @() }
+    $columns = if ($Props.Columns) { $Props.Columns } else { @() }
+    
+    $table = [DataTableComponent]::new($name, $data, $columns)
+    
+    # Set properties from Props
+    if ($Props.X) { $table.X = $Props.X }
+    if ($Props.Y) { $table.Y = $Props.Y }
+    if ($Props.Width) { $table.Width = $Props.Width }
+    if ($Props.Height) { $table.Height = $Props.Height }
+    if ($Props.Title) { $table.Title = $Props.Title }
+    if ($null -ne $Props.ShowBorder) { $table.ShowBorder = $Props.ShowBorder }
+    if ($null -ne $Props.ShowHeader) { $table.ShowHeader = $Props.ShowHeader }
+    if ($null -ne $Props.ShowFooter) { $table.ShowFooter = $Props.ShowFooter }
+    if ($null -ne $Props.ShowRowNumbers) { $table.ShowRowNumbers = $Props.ShowRowNumbers }
+    if ($null -ne $Props.AllowSort) { $table.AllowSort = $Props.AllowSort }
+    if ($null -ne $Props.AllowFilter) { $table.AllowFilter = $Props.AllowFilter }
+    if ($null -ne $Props.AllowSelection) { $table.AllowSelection = $Props.AllowSelection }
+    if ($null -ne $Props.MultiSelect) { $table.MultiSelect = $Props.MultiSelect }
+    if ($null -ne $Props.Visible) { $table.Visible = $Props.Visible }
+    if ($Props.OnRowSelect) { $table.OnRowSelect = $Props.OnRowSelect }
+    if ($Props.OnSelectionChange) { $table.OnSelectionChange = $Props.OnSelectionChange }
+    
+    return $table
+}
+
+#endregion
+
+# Export classes and functions
+Export-ModuleMember -Function @('New-TuiDataTable') -Class @('DataTableComponent')
+
+
+####\components\advanced-input-components.psm1
+# Advanced Input Components Module
+# Enhanced input components from the TUI Upgrade Roadmap
+
+#region DateTime Components with Calendar Grid
+
+function global:New-TuiCalendarPicker {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        Type = "CalendarPicker"
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 30 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 10 }
+        Value = if ($null -ne $Props.Value) { $Props.Value } else { (Get-Date) }
+        Mode = if ($null -ne $Props.Mode) { $Props.Mode } else { "Date" } # Date, DateTime, Time
+        IsFocusable = $true
+        CurrentView = "Day"  # Day, Month, Year
+        SelectedDate = if ($null -ne $Props.Value) { $Props.Value } else { (Get-Date) }
+        ViewDate = if ($null -ne $Props.Value) { $Props.Value } else { (Get-Date) }
+        Name = $Props.Name
+        OnChange = $Props.OnChange
+        OnSelect = $Props.OnSelect
+        
+        Render = {
+            param($self)
+            try {
+                $borderColor = if ($self.IsFocused) { 
+                    Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+                } else { 
+                    Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
+                }
+                
+                # Main container
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height `
+                    -BorderColor $borderColor -Title " Calendar "
+                
+                # Header with navigation
+                $headerY = $self.Y + 1
+                $monthYear = $self.ViewDate.ToString("MMMM yyyy")
+                $headerX = $self.X + [Math]::Floor(($self.Width - $monthYear.Length) / 2)
+                
+                Write-BufferString -X ($self.X + 2) -Y $headerY -Text "◄" -ForegroundColor $borderColor
+                Write-BufferString -X $headerX -Y $headerY -Text $monthYear -ForegroundColor (Get-ThemeColor "Header")
+                Write-BufferString -X ($self.X + $self.Width - 3) -Y $headerY -Text "►" -ForegroundColor $borderColor
+                
+                # Day headers
+                $dayHeaderY = $headerY + 2
+                $days = @("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")
+                $dayWidth = 4
+                $startX = $self.X + 2
+                
+                for ($i = 0; $i -lt $days.Count; $i++) {
+                    Write-BufferString -X ($startX + ($i * $dayWidth)) -Y $dayHeaderY `
+                        -Text $days[$i] -ForegroundColor (Get-ThemeColor "Subtle")
+                }
+                
+                # Calendar grid
+                $firstDay = Get-Date -Year $self.ViewDate.Year -Month $self.ViewDate.Month -Day 1
+                $startDayOfWeek = [int]$firstDay.DayOfWeek
+                $daysInMonth = [DateTime]::DaysInMonth($self.ViewDate.Year, $self.ViewDate.Month)
+                
+                $currentDay = 1
+                $calendarY = $dayHeaderY + 1
+                
+                for ($week = 0; $week -lt 6; $week++) {
+                    if ($currentDay -gt $daysInMonth) { break }
+                    
+                    for ($dayOfWeek = 0; $dayOfWeek -lt 7; $dayOfWeek++) {
+                        $x = $startX + ($dayOfWeek * $dayWidth)
+                        
+                        if ($week -eq 0 -and $dayOfWeek -lt $startDayOfWeek) {
+                            continue
+                        }
+                        
+                        if ($currentDay -le $daysInMonth) {
+                            $isSelected = ($currentDay -eq $self.SelectedDate.Day -and 
+                                         $self.ViewDate.Month -eq $self.SelectedDate.Month -and 
+                                         $self.ViewDate.Year -eq $self.SelectedDate.Year)
+                            
+                            $isToday = ($currentDay -eq (Get-Date).Day -and 
+                                      $self.ViewDate.Month -eq (Get-Date).Month -and 
+                                      $self.ViewDate.Year -eq (Get-Date).Year)
+                            
+                            $fg = if ($isSelected) { 
+                                Get-ThemeColor "Background" 
+                            } elseif ($isToday) { 
+                                Get-ThemeColor "Accent" 
+                            } else { 
+                                Get-ThemeColor "Primary" 
+                            }
+                            
+                            $bg = if ($isSelected) { 
+                                Get-ThemeColor "Accent" 
+                            } else { 
+                                Get-ThemeColor "Background" 
+                            }
+                            
+                            $dayText = $currentDay.ToString().PadLeft(2)
+                            Write-BufferString -X $x -Y ($calendarY + $week) -Text $dayText `
+                                -ForegroundColor $fg -BackgroundColor $bg
+                            
+                            $currentDay++
+                        }
+                    }
+                }
+                
+                # Time picker if in DateTime mode
+                if ($self.Mode -eq "DateTime") {
+                    $timeY = $self.Y + $self.Height - 2
+                    $timeStr = $self.SelectedDate.ToString("HH:mm")
+                    Write-BufferString -X ($self.X + 2) -Y $timeY -Text "Time: $timeStr" `
+                        -ForegroundColor (Get-ThemeColor "Primary")
+                }
+            } catch {
+                Write-Log -Level Error -Message "CalendarPicker Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $handled = $true
+                $date = $self.SelectedDate
+                $viewDate = $self.ViewDate
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::LeftArrow) {
+                        if ($Key.Modifiers -band [ConsoleModifiers]::Control) {
+                            # Previous month
+                            $self.ViewDate = $viewDate.AddMonths(-1)
+                        } else {
+                            # Previous day
+                            $date = $date.AddDays(-1)
+                            if ($date.Month -ne $viewDate.Month) {
+                                $self.ViewDate = $date
+                            }
+                        }
+                    }
+                    ([ConsoleKey]::RightArrow) {
+                        if ($Key.Modifiers -band [ConsoleModifiers]::Control) {
+                            # Next month
+                            $self.ViewDate = $viewDate.AddMonths(1)
+                        } else {
+                            # Next day
+                            $date = $date.AddDays(1)
+                            if ($date.Month -ne $viewDate.Month) {
+                                $self.ViewDate = $date
+                            }
+                        }
+                    }
+                    ([ConsoleKey]::UpArrow) {
+                        $date = $date.AddDays(-7)
+                        if ($date.Month -ne $viewDate.Month) {
+                            $self.ViewDate = $date
+                        }
+                    }
+                    ([ConsoleKey]::DownArrow) {
+                        $date = $date.AddDays(7)
+                        if ($date.Month -ne $viewDate.Month) {
+                            $self.ViewDate = $date
+                        }
+                    }
+                    ([ConsoleKey]::PageUp) {
+                        $self.ViewDate = $viewDate.AddMonths(-1)
+                        $date = Get-Date -Year $self.ViewDate.Year -Month $self.ViewDate.Month `
+                            -Day ([Math]::Min($date.Day, [DateTime]::DaysInMonth($self.ViewDate.Year, $self.ViewDate.Month)))
+                    }
+                    ([ConsoleKey]::PageDown) {
+                        $self.ViewDate = $viewDate.AddMonths(1)
+                        $date = Get-Date -Year $self.ViewDate.Year -Month $self.ViewDate.Month `
+                            -Day ([Math]::Min($date.Day, [DateTime]::DaysInMonth($self.ViewDate.Year, $self.ViewDate.Month)))
+                    }
+                    ([ConsoleKey]::Home) {
+                        $date = Get-Date
+                        $self.ViewDate = $date
+                    }
+                    ([ConsoleKey]::Enter) {
+                        if ($self.OnSelect) {
+                            Invoke-WithErrorHandling -Component "$($self.Name).OnSelect" -ScriptBlock {
+                                & $self.OnSelect -Date $date
+                            } -AdditionalData @{ Component = $self.Name; SelectedDate = $date }
+                        }
+                    }
+                    default {
+                        $handled = $false
+                    }
+                }
+                
+                if ($handled) {
+                    $self.SelectedDate = $date
+                    if ($self.OnChange) {
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -ScriptBlock {
+                            & $self.OnChange -NewValue $date
+                        } -AdditionalData @{ Component = $self.Name; NewValue = $date }
+                    }
+                    Request-TuiRefresh
+                }
+                
+                return $handled
+            } catch {
+                Write-Log -Level Error -Message "CalendarPicker HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    return $component
+}
+
+#endregion
+
+#region Enhanced Dropdown with Search
+
+function global:New-TuiSearchableDropdown {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        Type = "SearchableDropdown"
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 30 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Options = if ($null -ne $Props.Options) { $Props.Options } else { @() }
+        Value = $Props.Value
+        Placeholder = if ($null -ne $Props.Placeholder) { $Props.Placeholder } else { "Type to search..." }
+        MaxDisplayItems = if ($null -ne $Props.MaxDisplayItems) { $Props.MaxDisplayItems } else { 5 }
+        AllowCustomValue = if ($null -ne $Props.AllowCustomValue) { $Props.AllowCustomValue } else { $false }
+        IsFocusable = $true
+        IsOpen = $false
+        SearchText = ""
+        FilteredOptions = @()
+        SelectedIndex = 0
+        Name = $Props.Name
+        OnChange = $Props.OnChange
+        
+        Render = {
+            param($self)
+            try {
+                $borderColor = if ($self.IsFocused) { 
+                    Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+                } else { 
+                    Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
+                }
+                
+                # Main dropdown box
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height `
+                    -BorderColor $borderColor
+                
+                # Display text
+                $displayText = ""
+                if ($self.IsOpen) {
+                    $displayText = $self.SearchText
+                    if ([string]::IsNullOrEmpty($displayText) -and -not $self.IsFocused) {
+                        $displayText = $self.Placeholder
+                    }
+                } else {
+                    if ($self.Value) {
+                        $selected = $self.Options | Where-Object { $_.Value -eq $self.Value } | Select-Object -First 1
+                        if ($selected) {
+                            $displayText = $selected.Display
+                        } else {
+                            $displayText = $self.Value.ToString()
+                        }
+                    } else {
+                        $displayText = "Select..."
+                    }
+                }
+                
+                Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $displayText
+                
+                # Dropdown indicator
+                $indicator = if ($self.IsOpen) { "▲" } else { "▼" }
+                Write-BufferString -X ($self.X + $self.Width - 3) -Y ($self.Y + 1) -Text $indicator `
+                    -ForegroundColor $borderColor
+                
+                # Cursor for search mode
+                if ($self.IsOpen -and $self.IsFocused) {
+                    $cursorX = $self.X + 2 + $self.SearchText.Length
+                    if ($cursorX -lt ($self.X + $self.Width - 3)) {
+                        Write-BufferString -X $cursorX -Y ($self.Y + 1) -Text "_" `
+                            -BackgroundColor (Get-ThemeColor "Accent")
+                    }
+                }
+                
+                # Options dropdown
+                if ($self.IsOpen -and $self.FilteredOptions.Count -gt 0) {
+                    $dropHeight = [Math]::Min($self.FilteredOptions.Count, $self.MaxDisplayItems) + 2
+                    Write-BufferBox -X $self.X -Y ($self.Y + $self.Height) -Width $self.Width -Height $dropHeight `
+                        -BorderColor $borderColor -BackgroundColor (Get-ThemeColor "Background")
+                    
+                    $startIdx = 0
+                    if ($self.SelectedIndex -ge $self.MaxDisplayItems) {
+                        $startIdx = $self.SelectedIndex - $self.MaxDisplayItems + 1
+                    }
+                    
+                    $endIdx = [Math]::Min($startIdx + $self.MaxDisplayItems - 1, $self.FilteredOptions.Count - 1)
+                    
+                    for ($i = $startIdx; $i -le $endIdx; $i++) {
+                        $option = $self.FilteredOptions[$i]
+                        $y = $self.Y + $self.Height + 1 + ($i - $startIdx)
+                        
+                        $isSelected = ($i -eq $self.SelectedIndex)
+                        $fg = if ($isSelected) { Get-ThemeColor "Background" } else { Get-ThemeColor "Primary" }
+                        $bg = if ($isSelected) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Background" }
+                        
+                        $text = $option.Display
+                        if ($text.Length -gt ($self.Width - 4)) {
+                            $text = $text.Substring(0, $self.Width - 7) + "..."
+                        }
+                        
+                        # Highlight matching text
+                        if ($self.SearchText.Length -gt 0 -and -not $isSelected) {
+                            $matchIndex = $text.IndexOf($self.SearchText, [StringComparison]::OrdinalIgnoreCase)
+                            if ($matchIndex -ge 0) {
+                                # Draw text before match
+                                if ($matchIndex -gt 0) {
+                                    Write-BufferString -X ($self.X + 2) -Y $y `
+                                        -Text $text.Substring(0, $matchIndex) -ForegroundColor $fg
+                                }
+                                
+                                # Draw matching text highlighted
+                                Write-BufferString -X ($self.X + 2 + $matchIndex) -Y $y `
+                                    -Text $text.Substring($matchIndex, $self.SearchText.Length) `
+                                    -ForegroundColor (Get-ThemeColor "Warning")
+                                
+                                # Draw text after match
+                                $afterMatch = $matchIndex + $self.SearchText.Length
+                                if ($afterMatch -lt $text.Length) {
+                                    Write-BufferString -X ($self.X + 2 + $afterMatch) -Y $y `
+                                        -Text $text.Substring($afterMatch) -ForegroundColor $fg
+                                }
+                                
+                                continue
+                            }
+                        }
+                        
+                        Write-BufferString -X ($self.X + 2) -Y $y -Text $text `
+                            -ForegroundColor $fg -BackgroundColor $bg
+                    }
+                    
+                    # Scrollbar if needed
+                    if ($self.FilteredOptions.Count -gt $self.MaxDisplayItems) {
+                        $scrollHeight = $self.MaxDisplayItems
+                        $scrollPos = [Math]::Floor(($self.SelectedIndex / ($self.FilteredOptions.Count - 1)) * ($scrollHeight - 1))
+                        
+                        for ($i = 0; $i -lt $scrollHeight; $i++) {
+                            $char = if ($i -eq $scrollPos) { "█" } else { "│" }
+                            $color = if ($i -eq $scrollPos) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Subtle" }
+                            Write-BufferString -X ($self.X + $self.Width - 2) -Y ($self.Y + $self.Height + 1 + $i) `
+                                -Text $char -ForegroundColor $color
+                        }
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "SearchableDropdown Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        FilterOptions = {
+            try {
+                if ([string]::IsNullOrEmpty($this.SearchText)) {
+                    $this.FilteredOptions = $this.Options
+                } else {
+                    $this.FilteredOptions = @($this.Options | Where-Object {
+                        $_.Display -like "*$($this.SearchText)*"
+                    })
+                    
+                    # Add custom value option if allowed and no exact match
+                    if ($this.AllowCustomValue) {
+                        $exactMatch = $this.FilteredOptions | Where-Object { $_.Display -eq $this.SearchText }
+                        if (-not $exactMatch) {
+                            $this.FilteredOptions = @(@{
+                                Display = $this.SearchText
+                                Value = $this.SearchText
+                                IsCustom = $true
+                            }) + $this.FilteredOptions
+                        }
+                    }
+                }
+                
+                # Reset selection to first item
+                $this.SelectedIndex = 0
+            } catch {
+                Write-Log -Level Error -Message "SearchableDropdown FilterOptions error for '$($this.Name)': $_" -Data @{ Component = $this.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                if (-not $self.IsOpen) {
+                    switch ($Key.Key) {
+                        { $_ -in @([ConsoleKey]::Enter, [ConsoleKey]::Spacebar, [ConsoleKey]::DownArrow) } {
+                            $self.IsOpen = $true
+                            $self.SearchText = ""
+                            & $self.FilterOptions
+                            Request-TuiRefresh
+                            return $true
+                        }
+                    }
+                    return $false
+                }
+                
+                # Handle open dropdown
+                switch ($Key.Key) {
+                    ([ConsoleKey]::Escape) {
+                        $self.IsOpen = $false
+                        $self.SearchText = ""
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::Enter) {
+                        if ($self.FilteredOptions.Count -gt 0) {
+                            $selected = $self.FilteredOptions[$self.SelectedIndex]
+                            if ($self.OnChange) {
+                                Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -ScriptBlock {
+                                    & $self.OnChange -NewValue $selected.Value -Option $selected
+                                } -AdditionalData @{ Component = $self.Name; NewValue = $selected.Value; Option = $selected }
+                            }
+                            $self.Value = $selected.Value
+                            $self.IsOpen = $false
+                            $self.SearchText = ""
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::UpArrow) {
+                        if ($self.SelectedIndex -gt 0) {
+                            $self.SelectedIndex--
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::DownArrow) {
+                        if ($self.SelectedIndex -lt ($self.FilteredOptions.Count - 1)) {
+                            $self.SelectedIndex++
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::Backspace) {
+                        if ($self.SearchText.Length -gt 0) {
+                            $self.SearchText = $self.SearchText.Substring(0, $self.SearchText.Length - 1)
+                            & $self.FilterOptions
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    default {
+                        if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar)) {
+                            $self.SearchText += $Key.KeyChar
+                            & $self.FilterOptions
+                            Request-TuiRefresh
+                            return $true
+                        }
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "SearchableDropdown HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    return $component
+}
+
+#endregion
+
+#region Multi-Select Components
+
+function global:New-TuiMultiSelect {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        Type = "MultiSelect"
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 30 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 10 }
+        Options = if ($null -ne $Props.Options) { $Props.Options } else { @() }
+        SelectedValues = if ($null -ne $Props.SelectedValues) { $Props.SelectedValues } else { @() }
+        Title = if ($null -ne $Props.Title) { $Props.Title } else { "Select items" }
+        AllowSelectAll = if ($null -ne $Props.AllowSelectAll) { $Props.AllowSelectAll } else { $true }
+        IsFocusable = $true
+        SelectedIndex = 0
+        ScrollOffset = 0
+        Name = $Props.Name
+        OnChange = $Props.OnChange
+        OnSubmit = $Props.OnSubmit
+        
+        Render = {
+            param($self)
+            try {
+                $borderColor = if ($self.IsFocused) { 
+                    Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+                } else { 
+                    Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
+                }
+                
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height `
+                    -BorderColor $borderColor -Title " $($self.Title) "
+                
+                # Select all option
+                $currentY = $self.Y + 1
+                if ($self.AllowSelectAll) {
+                    $allSelected = $self.Options.Count -eq $self.SelectedValues.Count
+                    $checkbox = if ($allSelected) { "[X]" } else { "[ ]" }
+                    $fg = if ($self.SelectedIndex -eq -1) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                    Write-BufferString -X ($self.X + 2) -Y $currentY -Text "$checkbox Select All" `
+                        -ForegroundColor $fg
+                    $currentY += 2
+                }
+                
+                # Options
+                $visibleHeight = $self.Height - 4
+                if ($self.AllowSelectAll) { $visibleHeight -= 2 }
+                
+                $startIdx = $self.ScrollOffset
+                $endIdx = [Math]::Min($self.Options.Count - 1, $startIdx + $visibleHeight - 1)
+                
+                for ($i = $startIdx; $i -le $endIdx; $i++) {
+                    $option = $self.Options[$i]
+                    $isChecked = $self.SelectedValues -contains $option.Value
+                    $isHighlighted = ($i -eq $self.SelectedIndex)
+                    
+                    $checkbox = if ($isChecked) { "[X]" } else { "[ ]" }
+                    $fg = if ($isHighlighted) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Primary" }
+                    
+                    $text = "$checkbox $($option.Display)"
+                    if ($text.Length -gt ($self.Width - 4)) {
+                        $text = $text.Substring(0, $self.Width - 7) + "..."
+                    }
+                    
+                    Write-BufferString -X ($self.X + 2) -Y $currentY -Text $text -ForegroundColor $fg
+                    $currentY++
+                }
+                
+                # Status line
+                $statusY = $self.Y + $self.Height - 2
+                $statusText = "$($self.SelectedValues.Count) of $($self.Options.Count) selected"
+                Write-BufferString -X ($self.X + 2) -Y $statusY -Text $statusText `
+                    -ForegroundColor (Get-ThemeColor "Subtle")
+            } catch {
+                Write-Log -Level Error -Message "MultiSelect Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $maxIndex = $self.Options.Count - 1
+                if ($self.AllowSelectAll) { $maxIndex++ }
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::UpArrow) {
+                        if ($self.AllowSelectAll -and $self.SelectedIndex -eq 0) {
+                            $self.SelectedIndex = -1
+                        } elseif ($self.SelectedIndex -gt 0 -or ($self.AllowSelectAll -and $self.SelectedIndex -gt -1)) {
+                            $self.SelectedIndex--
+                            if ($self.SelectedIndex -ge 0 -and $self.SelectedIndex -lt $self.ScrollOffset) {
+                                $self.ScrollOffset = $self.SelectedIndex
+                            }
+                        }
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::DownArrow) {
+                        if ($self.SelectedIndex -lt ($self.Options.Count - 1)) {
+                            $self.SelectedIndex++
+                            $visibleHeight = $self.Height - 4
+                            if ($self.AllowSelectAll) { $visibleHeight -= 2 }
+                            if ($self.SelectedIndex -ge ($self.ScrollOffset + $visibleHeight)) {
+                                $self.ScrollOffset = $self.SelectedIndex - $visibleHeight + 1
+                            }
+                        }
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::Spacebar) {
+                        if ($self.SelectedIndex -eq -1 -and $self.AllowSelectAll) {
+                            # Toggle all
+                            if ($self.SelectedValues.Count -eq $self.Options.Count) {
+                                $self.SelectedValues = @()
+                            } else {
+                                $self.SelectedValues = @($self.Options | ForEach-Object { $_.Value })
+                            }
+                        } elseif ($self.SelectedIndex -ge 0) {
+                            # Toggle individual
+                            $option = $self.Options[$self.SelectedIndex]
+                            if ($self.SelectedValues -contains $option.Value) {
+                                $self.SelectedValues = @($self.SelectedValues | Where-Object { $_ -ne $option.Value })
+                            } else {
+                                $self.SelectedValues += $option.Value
+                            }
+                        }
+                        
+                        if ($self.OnChange) {
+                            Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -ScriptBlock {
+                                & $self.OnChange -SelectedValues $self.SelectedValues
+                            } -AdditionalData @{ Component = $self.Name; SelectedValues = $self.SelectedValues }
+                        }
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::Enter) {
+                        if ($self.OnSubmit) {
+                            Invoke-WithErrorHandling -Component "$($self.Name).OnSubmit" -ScriptBlock {
+                                & $self.OnSubmit -SelectedValues $self.SelectedValues
+                            } -AdditionalData @{ Component = $self.Name; SelectedValues = $self.SelectedValues }
+                        }
+                        return $true
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "MultiSelect HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    return $component
+}
+
+#endregion
+
+#region Numeric Input Components
+
+function global:New-TuiNumberInput {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        Type = "NumberInput"
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 20 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Value = if ($null -ne $Props.Value) { $Props.Value } else { 0 }
+        Min = if ($null -ne $Props.Min) { $Props.Min } else { 0 }
+        Max = if ($null -ne $Props.Max) { $Props.Max } else { 100 }
+        Step = if ($null -ne $Props.Step) { $Props.Step } else { 1 }
+        DecimalPlaces = if ($null -ne $Props.DecimalPlaces) { $Props.DecimalPlaces } else { 0 }
+        IsFocusable = $true
+        TextValue = (if ($null -ne $Props.Value) { $Props.Value } else { 0 }).ToString()
+        CursorPosition = 0
+        Name = $Props.Name
+        OnChange = $Props.OnChange
+        
+        Render = {
+            param($self)
+            try {
+                $borderColor = if ($self.IsFocused) { 
+                    Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+                } else { 
+                    Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
+                }
+                
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height `
+                    -BorderColor $borderColor
+                
+                # Value display
+                $displayValue = $self.TextValue
+                if ($displayValue.Length -gt ($self.Width - 6)) {
+                    $displayValue = $displayValue.Substring(0, $self.Width - 9) + "..."
+                }
+                
+                Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $displayValue
+                
+                # Cursor
+                if ($self.IsFocused -and $self.CursorPosition -le $displayValue.Length) {
+                    $cursorX = $self.X + 2 + $self.CursorPosition
+                    if ($cursorX -lt ($self.X + $self.Width - 4)) {
+                        Write-BufferString -X $cursorX -Y ($self.Y + 1) -Text "_" `
+                            -BackgroundColor (Get-ThemeColor "Accent")
+                    }
+                }
+                
+                # Spinner buttons
+                Write-BufferString -X ($self.X + $self.Width - 3) -Y ($self.Y + 1) -Text "▲" `
+                    -ForegroundColor $borderColor
+                Write-BufferString -X ($self.X + $self.Width - 3) -Y ($self.Y + 1) -Text "▼" `
+                    -ForegroundColor $borderColor
+                
+                # Min/Max indicators
+                if ($self.Value -le $self.Min) {
+                    Write-BufferString -X ($self.X + 1) -Y ($self.Y + 1) -Text "⊥" `
+                        -ForegroundColor (Get-ThemeColor "Warning")
+                }
+                if ($self.Value -ge $self.Max) {
+                    Write-BufferString -X ($self.X + $self.Width - 2) -Y ($self.Y + 1) -Text "⊤" `
+                        -ForegroundColor (Get-ThemeColor "Warning")
+                }
+            } catch {
+                Write-Log -Level Error -Message "NumberInput Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        ValidateAndUpdate = {
+            try {
+                $newValue = [double]$this.TextValue
+                $newValue = [Math]::Max($this.Min, [Math]::Min($this.Max, $newValue))
+                
+                if ($this.DecimalPlaces -eq 0) {
+                    $newValue = [Math]::Floor($newValue)
+                } else {
+                    $newValue = [Math]::Round($newValue, $this.DecimalPlaces)
+                }
+                
+                $this.Value = $newValue
+                $this.TextValue = $newValue.ToString("F$($this.DecimalPlaces)")
+                
+                if ($this.OnChange) {
+                    Invoke-WithErrorHandling -Component "$($this.Name).OnChange" -ScriptBlock {
+                        & $this.OnChange -NewValue $newValue
+                    } -AdditionalData @{ Component = $this.Name; NewValue = $newValue }
+                }
+                
+                return $true
+            } catch {
+                # Invalid input, restore previous value
+                $this.TextValue = $this.Value.ToString("F$($this.DecimalPlaces)")
+                Write-Log -Level Warning -Message "NumberInput ValidateAndUpdate error for '$($this.Name)': $_" -Data @{ Component = $this.Name; InputText = $this.TextValue; Exception = $_ }
+                return $false
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                switch ($Key.Key) {
+                    ([ConsoleKey]::UpArrow) {
+                        $self.Value = [Math]::Min($self.Max, $self.Value + $self.Step)
+                        $self.TextValue = $self.Value.ToString("F$($self.DecimalPlaces)")
+                        $self.CursorPosition = $self.TextValue.Length
+                        if ($self.OnChange) {
+                            Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -ScriptBlock {
+                                & $self.OnChange -NewValue $self.Value
+                            } -AdditionalData @{ Component = $self.Name; NewValue = $self.Value }
+                        }
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::DownArrow) {
+                        $self.Value = [Math]::Max($self.Min, $self.Value - $self.Step)
+                        $self.TextValue = $self.Value.ToString("F$($self.DecimalPlaces)")
+                        $self.CursorPosition = $self.TextValue.Length
+                        if ($self.OnChange) {
+                            Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -ScriptBlock {
+                                & $self.OnChange -NewValue $self.Value
+                            } -AdditionalData @{ Component = $self.Name; NewValue = $self.Value }
+                        }
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::LeftArrow) {
+                        if ($self.CursorPosition -gt 0) {
+                            $self.CursorPosition--
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::RightArrow) {
+                        if ($self.CursorPosition -lt $self.TextValue.Length) {
+                            $self.CursorPosition++
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::Home) {
+                        $self.CursorPosition = 0
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::End) {
+                        $self.CursorPosition = $self.TextValue.Length
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    ([ConsoleKey]::Backspace) {
+                        if ($self.CursorPosition -gt 0) {
+                            $self.TextValue = $self.TextValue.Remove($self.CursorPosition - 1, 1)
+                            $self.CursorPosition--
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::Delete) {
+                        if ($self.CursorPosition -lt $self.TextValue.Length) {
+                            $self.TextValue = $self.TextValue.Remove($self.CursorPosition, 1)
+                            Request-TuiRefresh
+                        }
+                        return $true
+                    }
+                    ([ConsoleKey]::Enter) {
+                        & $self.ValidateAndUpdate -self $self
+                        Request-TuiRefresh
+                        return $true
+                    }
+                    default {
+                        if ($Key.KeyChar -and ($Key.KeyChar -match '[\d\.\-]')) {
+                            $self.TextValue = $self.TextValue.Insert($self.CursorPosition, $Key.KeyChar)
+                            $self.CursorPosition++
+                            Request-TuiRefresh
+                            return $true
+                        }
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "NumberInput HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    return $component
+}
+
+function global:New-TuiSlider {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        Type = "Slider"
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 30 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 1 }
+        Value = if ($null -ne $Props.Value) { $Props.Value } else { 50 }
+        Min = if ($null -ne $Props.Min) { $Props.Min } else { 0 }
+        Max = if ($null -ne $Props.Max) { $Props.Max } else { 100 }
+        Step = if ($null -ne $Props.Step) { $Props.Step } else { 1 }
+        ShowValue = if ($null -ne $Props.ShowValue) { $Props.ShowValue } else { $true }
+        IsFocusable = $true
+        Name = $Props.Name
+        OnChange = $Props.OnChange
+        
+        Render = {
+            param($self)
+            try {
+                $fg = if ($self.IsFocused) { 
+                    Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
+                } else { 
+                    Get-ThemeColor "Primary" -Default ([ConsoleColor]::White)
+                }
+                
+                # Calculate position
+                $range = $self.Max - $self.Min
+                $percent = ($self.Value - $self.Min) / $range
+                $trackWidth = $self.Width - 2
+                $thumbPos = [Math]::Floor($trackWidth * $percent)
+                
+                # Draw track
+                $track = "─" * $trackWidth
+                Write-BufferString -X ($self.X + 1) -Y $self.Y -Text $track -ForegroundColor (Get-ThemeColor "Subtle")
+                
+                # Draw filled portion
+                if ($thumbPos -gt 0) {
+                    $filled = "═" * $thumbPos
+                    Write-BufferString -X ($self.X + 1) -Y $self.Y -Text $filled -ForegroundColor $fg
+                }
+                
+                # Draw thumb
+                Write-BufferString -X ($self.X + 1 + $thumbPos) -Y $self.Y -Text "●" -ForegroundColor $fg
+                
+                # Draw bounds
+                Write-BufferString -X $self.X -Y $self.Y -Text "[" -ForegroundColor $fg
+                Write-BufferString -X ($self.X + $self.Width - 1) -Y $self.Y -Text "]" -ForegroundColor $fg
+                
+                # Show value
+                if ($self.ShowValue) {
+                    $valueText = $self.Value.ToString()
+                    $valueX = $self.X + [Math]::Floor(($self.Width - $valueText.Length) / 2)
+                    Write-BufferString -X $valueX -Y ($self.Y + 1) -Text $valueText -ForegroundColor $fg
+                }
+            } catch {
+                Write-Log -Level Error -Message "Slider Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $handled = $true
+                $oldValue = $self.Value
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::LeftArrow) {
+                        $self.Value = [Math]::Max($self.Min, $self.Value - $self.Step)
+                    }
+                    ([ConsoleKey]::RightArrow) {
+                        $self.Value = [Math]::Min($self.Max, $self.Value + $self.Step)
+                    }
+                    ([ConsoleKey]::Home) {
+                        $self.Value = $self.Min
+                    }
+                    ([ConsoleKey]::End) {
+                        $self.Value = $self.Max
+                    }
+                    ([ConsoleKey]::PageDown) {
+                        $largeStep = [Math]::Max($self.Step, ($self.Max - $self.Min) / 10)
+                        $self.Value = [Math]::Max($self.Min, $self.Value - $largeStep)
+                    }
+                    ([ConsoleKey]::PageUp) {
+                        $largeStep = [Math]::Max($self.Step, ($self.Max - $self.Min) / 10)
+                        $self.Value = [Math]::Min($self.Max, $self.Value + $largeStep)
+                    }
+                    default {
+                        $handled = $false
+                    }
+                }
+                
+                if ($handled -and $self.Value -ne $oldValue) {
+                    if ($self.OnChange) {
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -ScriptBlock {
+                            & $self.OnChange -NewValue $self.Value
+                        } -AdditionalData @{ Component = $self.Name; NewValue = $self.Value }
+                    }
+                    Request-TuiRefresh
+                }
+                
+                return $handled
+            } catch {
+                Write-Log -Level Error -Message "Slider HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    return $component
+}
+
+#endregion
+
+Export-ModuleMember -Function @(
+    'New-TuiCalendarPicker',
+    'New-TuiSearchableDropdown',
+    'New-TuiMultiSelect',
+    'New-TuiNumberInput',
+    'New-TuiSlider'
+)
+
+
 ####\components\navigation-class.psm1
 # Navigation Component Classes Module for PMC Terminal v5
 # Implements navigation menu functionality with keyboard shortcuts
@@ -929,69 +2525,643 @@ Export-ModuleMember -Function * -Cmdlet * -Variable * -Alias *
 
 
 ####\modules\data-manager.psm1
-# ==============================================================================
-# PMC Terminal v5 - Data Manager Module (Corrected Dependencies)
-# Manages data persistence and CRUD operations using strongly-typed models.
-# ==============================================================================
+# Data Manager Module
+# Unified data persistence and CRUD operations with event integration
+# AI: Refactored from dispatch-based actions to direct function calls
+# AI: Now uses strongly-typed PmcTask and PmcProject classes from models module
 
-# AI-FIX: All 'using module' statements have been removed.
-# The Start-App.ps1 script is now solely responsible for loading dependencies
-# in the correct order before this module is imported.
+# AI-FIX: Removed 'using module' statements to prevent circular dependencies
+# Dependencies are loaded by the main application in proper order
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# --- Module-level state variables ---
+# Module-level state variables
 $script:Data = @{
     Projects = [System.Collections.Generic.List[PmcProject]]::new()
     Tasks = [System.Collections.Generic.List[PmcTask]]::new()
+    TimeEntries = @()
+    ActiveTimers = @{}
+    TodoTemplates = @{}
     Settings = @{
+        DefaultView = "Dashboard"
         Theme = "Modern"
         AutoSave = $true
         BackupCount = 5
     }
+    # AI: Maintaining compatibility with legacy underscore format
+    time_entries = @()    # underscore format for action compatibility
+    timers = @()          # for action compatibility
 }
+
 $script:DataPath = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "PMCTerminal\pmc-data.json"
 $script:BackupPath = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "PMCTerminal\backups"
-
-# --- Public Service Functions ---
+$script:LastSaveTime = $null
+$script:DataModified = $false
 
 function Initialize-DataManager {
     <#
-    .SYNOPSIS Initializes the data management system.
-    .DESCRIPTION Sets up directories, loads data, and returns the service object.
+    .SYNOPSIS
+    Initializes the data management system
+    
+    .DESCRIPTION
+    Sets up the data directory, loads existing data, and configures event handlers
     #>
     [CmdletBinding()]
     param()
     
-    return Invoke-WithErrorHandling -Component "DataManager" -Context "Initialize" -ScriptBlock {
+    Invoke-WithErrorHandling -Component "DataManager.Initialize" -Context "DataManager initialization" -ScriptBlock {
+        # Ensure data directory exists
         $dataDirectory = Split-Path $script:DataPath -Parent
         if (-not (Test-Path $dataDirectory)) {
             New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
             Write-Log -Level Info -Message "Created data directory: $dataDirectory"
         }
         
+        # Ensure backup directory exists
         if (-not (Test-Path $script:BackupPath)) {
             New-Item -ItemType Directory -Path $script:BackupPath -Force | Out-Null
+            Write-Log -Level Info -Message "Created backup directory: $script:BackupPath"
         }
         
+        # Load existing data
         Load-UnifiedData
         
-        Write-Log -Level Info -Message "DataManager initialized successfully."
+        # Initialize event handlers
+        Initialize-DataEventHandlers
         
-        # Return a service object with direct methods
-        # AI-NOTE: The actual class is defined below. This factory function returns an instance of it.
-        return [DataManager]::new()
+        Write-Log -Level Info -Message "DataManager initialized successfully"
+        
+        # AI: Return both service object with methods and class-based DataManager
+        $serviceObject = [PSCustomObject]@{
+            AddTask = Get-Command Add-PmcTask
+            UpdateTask = Get-Command Update-PmcTask
+            RemoveTask = Get-Command Remove-PmcTask
+            GetTasks = Get-Command Get-PmcTasks
+            GetProjects = Get-Command Get-PmcProjects
+            SaveData = Get-Command Save-UnifiedData
+            LoadData = Get-Command Load-UnifiedData
+        }
+        
+        # Also provide class-based interface for compatibility
+        $dataManager = [DataManager]::new()
+        return $dataManager
     }
 }
 
-# --- DataManager Class Definition ---
+function Load-UnifiedData {
+    <#
+    .SYNOPSIS
+    Loads application data from disk
+    
+    .DESCRIPTION
+    Loads the unified data file and populates the global data structure with strongly-typed objects
+    #>
+    [CmdletBinding()]
+    param()
+    
+    Invoke-WithErrorHandling -Component "DataManager.LoadData" -Context "Loading unified data from disk" -ScriptBlock {
+        if (Test-Path $script:DataPath) {
+            try {
+                $content = Get-Content -Path $script:DataPath -Raw
+                $loadedData = $content | ConvertFrom-Json -AsHashtable
+                
+                # AI: Defensive validation of loaded data structure
+                if ($loadedData -and $loadedData -is [hashtable]) {
+                    # AI: Re-hydrate Tasks as PmcTask objects
+                    if ($loadedData.ContainsKey('Tasks') -and $loadedData.Tasks) {
+                        $script:Data.Tasks.Clear()
+                        foreach ($taskData in $loadedData.Tasks) {
+                            if ($taskData -is [hashtable]) {
+                                # AI: Use static method to create from legacy format
+                                $task = [PmcTask]::FromLegacyFormat($taskData)
+                                $script:Data.Tasks.Add($task)
+                            }
+                        }
+                        Write-Log -Level Debug -Message "Re-hydrated $($script:Data.Tasks.Count) tasks as PmcTask objects"
+                    }
+                    
+                    # AI: Re-hydrate Projects as PmcProject objects
+                    if ($loadedData.ContainsKey('Projects') -and $loadedData.Projects) {
+                        $script:Data.Projects.Clear()
+                        # AI: Projects were stored as hashtable, need to convert each value
+                        if ($loadedData.Projects -is [hashtable]) {
+                            foreach ($projectKey in $loadedData.Projects.Keys) {
+                                $projectData = $loadedData.Projects[$projectKey]
+                                if ($projectData -is [hashtable]) {
+                                    $project = [PmcProject]::FromLegacyFormat($projectData)
+                                    $script:Data.Projects.Add($project)
+                                }
+                            }
+                        }
+                        Write-Log -Level Debug -Message "Re-hydrated $($script:Data.Projects.Count) projects as PmcProject objects"
+                    }
+                    
+                    # AI: Load other data structures as-is for now
+                    foreach ($key in @('TimeEntries', 'ActiveTimers', 'TodoTemplates', 'Settings', 'time_entries', 'timers')) {
+                        if ($loadedData.ContainsKey($key)) {
+                            $script:Data[$key] = $loadedData[$key]
+                        }
+                    }
+                    
+                    # Update global data reference
+                    $global:Data = $script:Data
+                    
+                    Write-Log -Level Info -Message "Data loaded successfully from disk"
+                } else {
+                    Write-Log -Level Warning -Message "Invalid data format in file, using defaults"
+                    $global:Data = $script:Data
+                }
+            } catch {
+                Write-Log -Level Error -Message "Failed to parse data file: $_"
+                Write-Log -Level Info -Message "Using default data structure"
+                $global:Data = $script:Data
+            }
+        } else {
+            Write-Log -Level Info -Message "No existing data file found, using defaults"
+            $global:Data = $script:Data
+        }
+        
+        $script:LastSaveTime = Get-Date
+    }
+}
 
+function Save-UnifiedData {
+    <#
+    .SYNOPSIS
+    Saves application data to disk
+    
+    .DESCRIPTION
+    Persists the current data state to disk with automatic backup rotation
+    #>
+    [CmdletBinding()]
+    param()
+    
+    Invoke-WithErrorHandling -Component "DataManager.SaveData" -Context "Saving unified data to disk" -ScriptBlock {
+        # Create backup if file exists
+        if (Test-Path $script:DataPath) {
+            $backupName = "pmc-data_{0:yyyyMMdd_HHmmss}.json" -f (Get-Date)
+            $backupFilePath = Join-Path $script:BackupPath $backupName
+            Copy-Item -Path $script:DataPath -Destination $backupFilePath -Force
+            
+            # Rotate backups
+            $backups = Get-ChildItem -Path $script:BackupPath -Filter "pmc-data_*.json" | 
+                       Sort-Object LastWriteTime -Descending
+            
+            if ($backups.Count -gt $script:Data.Settings.BackupCount) {
+                $backups | Select-Object -Skip $script:Data.Settings.BackupCount | Remove-Item -Force
+            }
+        }
+        
+        # AI: Convert strongly-typed objects to legacy format for JSON serialization
+        $dataToSave = @{
+            Tasks = @($script:Data.Tasks | ForEach-Object { $_.ToLegacyFormat() })
+            Projects = @{}  # AI: Convert back to hashtable format for compatibility
+            TimeEntries = $script:Data.TimeEntries
+            ActiveTimers = $script:Data.ActiveTimers
+            TodoTemplates = $script:Data.TodoTemplates
+            Settings = $script:Data.Settings
+            time_entries = $script:Data.time_entries
+            timers = $script:Data.timers
+        }
+        
+        # AI: Rebuild Projects hashtable keyed by project key
+        foreach ($project in $script:Data.Projects) {
+            $dataToSave.Projects[$project.Key] = $project.ToLegacyFormat()
+        }
+        
+        # Save current data
+        $dataToSave | ConvertTo-Json -Depth 10 | Out-File -FilePath $script:DataPath -Encoding UTF8
+        $script:LastSaveTime = Get-Date
+        $script:DataModified = $false
+        
+        Write-Log -Level Debug -Message "Data saved successfully"
+    }
+}
+
+#region Task Management Functions
+
+function Add-PmcTask {
+    <#
+    .SYNOPSIS
+    Creates a new task
+    
+    .DESCRIPTION
+    Adds a new task to the data store and publishes a Tasks.Changed event
+    
+    .PARAMETER Title
+    The title of the task (required)
+    
+    .PARAMETER Description
+    The task description
+    
+    .PARAMETER Priority
+    Task priority: low, medium, or high
+    
+    .PARAMETER Category
+    Task category/project name
+    
+    .PARAMETER DueDate
+    Task due date
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Title,
+        
+        [string]$Description = "",
+        
+        [ValidateSet("low", "medium", "high")]
+        [string]$Priority = "medium",
+        
+        [string]$Category = "General",
+        
+        [string]$DueDate = ""
+    )
+    
+    Invoke-WithErrorHandling -Component "DataManager.AddTask" -Context "Adding new task to data store" -ScriptBlock {
+        # AI: Input validation
+        if ([string]::IsNullOrWhiteSpace($Title)) {
+            throw [StateMutationException]::new("Task title cannot be empty", @{ Title = $Title })
+        }
+        
+        # AI: Convert string priority to enum
+        $taskPriority = switch ($Priority.ToLower()) {
+            "low" { [TaskPriority]::Low }
+            "medium" { [TaskPriority]::Medium }
+            "high" { [TaskPriority]::High }
+            default { [TaskPriority]::Medium }
+        }
+        
+        # AI: Create new task using class constructor
+        $newTask = [PmcTask]::new($Title, $Description, $taskPriority, $Category)
+        
+        # AI: Set due date if provided
+        if ($DueDate -and $DueDate -ne "N/A") {
+            try {
+                $newTask.DueDate = [datetime]::Parse($DueDate)
+            } catch {
+                Write-Log -Level Warning -Message "Invalid due date format: $DueDate"
+                $newTask.DueDate = $null
+            }
+        }
+        
+        # AI: Add to strongly-typed task list
+        $script:Data.Tasks.Add($newTask)
+        $script:DataModified = $true
+        
+        Write-Log -Level Info -Message "Created task '$($newTask.Title)' with ID $($newTask.Id)"
+        
+        # Auto-save if enabled
+        if ($script:Data.Settings.AutoSave) {
+            Save-UnifiedData
+        }
+        
+        # AI: Publish event for UI refresh
+        Publish-Event -EventName "Tasks.Changed" -Data @{
+            Action = "Created"
+            TaskId = $newTask.Id
+            Task = $newTask
+        }
+        
+        return $newTask
+    }
+}
+
+function Update-PmcTask {
+    <#
+    .SYNOPSIS
+    Updates an existing task
+    
+    .DESCRIPTION
+    Modifies task properties and publishes a Tasks.Changed event
+    
+    .PARAMETER Task
+    The PmcTask object to update (required)
+    
+    .PARAMETER Title
+    New task title
+    
+    .PARAMETER Description
+    New task description
+    
+    .PARAMETER Priority
+    New task priority
+    
+    .PARAMETER Category
+    New task category
+    
+    .PARAMETER DueDate
+    New due date
+    
+    .PARAMETER Completed
+    Task completion status
+    
+    .PARAMETER Progress
+    Task progress percentage (0-100)
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [PmcTask]$Task,
+        
+        [string]$Title,
+        
+        [string]$Description,
+        
+        [ValidateSet("low", "medium", "high")]
+        [string]$Priority,
+        
+        [string]$Category,
+        
+        [string]$DueDate,
+        
+        [bool]$Completed,
+        
+        [ValidateRange(0, 100)]
+        [int]$Progress
+    )
+    
+    Invoke-WithErrorHandling -Component "DataManager.UpdateTask" -Context "Updating existing task" -ScriptBlock {
+        # AI: Find task in list to ensure we're updating the managed instance
+        $managedTask = $script:Data.Tasks | Where-Object { $_.Id -eq $Task.Id } | Select-Object -First 1
+        
+        if (-not $managedTask) {
+            throw [StateMutationException]::new("Task not found in data store", @{ TaskId = $Task.Id })
+        }
+        
+        $updatedFields = @()
+        
+        # AI: Update task properties using proper object properties
+        if ($PSBoundParameters.ContainsKey('Title') -and $Title) { 
+            $managedTask.Title = $Title.Trim()
+            $updatedFields += "Title"
+        }
+        if ($PSBoundParameters.ContainsKey('Description')) { 
+            $managedTask.Description = $Description
+            $updatedFields += "Description"
+        }
+        if ($PSBoundParameters.ContainsKey('Priority')) {
+            $managedTask.Priority = switch ($Priority.ToLower()) {
+                "low" { [TaskPriority]::Low }
+                "medium" { [TaskPriority]::Medium }
+                "high" { [TaskPriority]::High }
+                default { [TaskPriority]::Medium }
+            }
+            $updatedFields += "Priority"
+        }
+        if ($PSBoundParameters.ContainsKey('Category')) { 
+            $managedTask.ProjectKey = $Category
+            $managedTask.Category = $Category  # AI: Maintain backward compatibility
+            $updatedFields += "Category"
+        }
+        if ($PSBoundParameters.ContainsKey('DueDate')) {
+            if ($DueDate -and $DueDate -ne "N/A") {
+                try {
+                    $managedTask.DueDate = [datetime]::Parse($DueDate)
+                } catch {
+                    Write-Log -Level Warning -Message "Invalid due date format: $DueDate"
+                    $managedTask.DueDate = $null
+                }
+            } else {
+                $managedTask.DueDate = $null
+            }
+            $updatedFields += "DueDate"
+        }
+        if ($PSBoundParameters.ContainsKey('Progress')) {
+            # AI: Use class method which handles status updates
+            $managedTask.UpdateProgress($Progress)
+            $updatedFields += "Progress"
+        }
+        if ($PSBoundParameters.ContainsKey('Completed')) {
+            if ($Completed) {
+                $managedTask.Complete()
+            } else {
+                $managedTask.Status = [TaskStatus]::Pending
+                $managedTask.Completed = $false
+                $managedTask.Progress = 0
+            }
+            $updatedFields += "Completed"
+        }
+        
+        $managedTask.UpdatedAt = [datetime]::Now
+        $script:DataModified = $true
+        
+        Write-Log -Level Info -Message "Updated task $($managedTask.Id) - Fields: $($updatedFields -join ', ')"
+        
+        # Auto-save if enabled
+        if ($script:Data.Settings.AutoSave) {
+            Save-UnifiedData
+        }
+        
+        # AI: Publish event for UI refresh
+        Publish-Event -EventName "Tasks.Changed" -Data @{
+            Action = "Updated"
+            TaskId = $managedTask.Id
+            Task = $managedTask
+            UpdatedFields = $updatedFields
+        }
+        
+        return $managedTask
+    }
+}
+
+function Remove-PmcTask {
+    <#
+    .SYNOPSIS
+    Removes a task from the data store
+    
+    .DESCRIPTION
+    Deletes a task and publishes a Tasks.Changed event
+    
+    .PARAMETER Task
+    The PmcTask object to remove
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [PmcTask]$Task
+    )
+    
+    Invoke-WithErrorHandling -Component "DataManager.RemoveTask" -Context "Removing task from data store" -ScriptBlock {
+        # AI: Find and remove task from strongly-typed list
+        $taskToRemove = $script:Data.Tasks | Where-Object { $_.Id -eq $Task.Id } | Select-Object -First 1
+        
+        if ($taskToRemove) {
+            $script:Data.Tasks.Remove($taskToRemove) | Out-Null
+            $script:DataModified = $true
+            
+            Write-Log -Level Info -Message "Deleted task $($Task.Id)"
+            
+            # Auto-save if enabled
+            if ($script:Data.Settings.AutoSave) {
+                Save-UnifiedData
+            }
+            
+            # AI: Publish event for UI refresh
+            Publish-Event -EventName "Tasks.Changed" -Data @{
+                Action = "Deleted"
+                TaskId = $Task.Id
+                Task = $Task
+            }
+            
+            return $true
+        } else {
+            Write-Log -Level Warning -Message "Task not found with ID $($Task.Id)"
+            return $false
+        }
+    }
+}
+
+function Get-PmcTasks {
+    <#
+    .SYNOPSIS
+    Retrieves tasks from the data store
+    
+    .DESCRIPTION
+    Returns all tasks or filtered tasks based on criteria
+    
+    .PARAMETER Completed
+    Filter by completion status
+    
+    .PARAMETER Priority
+    Filter by priority level
+    
+    .PARAMETER Category
+    Filter by category/project
+    #>
+    [CmdletBinding()]
+    param(
+        [bool]$Completed,
+        
+        [ValidateSet("low", "medium", "high")]
+        [string]$Priority,
+        
+        [string]$Category
+    )
+    
+    Invoke-WithErrorHandling -Component "DataManager.GetTasks" -Context "Retrieving tasks from data store" -ScriptBlock {
+        # AI: Start with all tasks from strongly-typed list
+        $tasks = $script:Data.Tasks
+        
+        # Apply filters if specified
+        if ($PSBoundParameters.ContainsKey('Completed')) {
+            $tasks = $tasks | Where-Object { $_.Completed -eq $Completed }
+        }
+        
+        if ($Priority) {
+            # AI: Convert string to enum for comparison
+            $priorityEnum = switch ($Priority.ToLower()) {
+                "low" { [TaskPriority]::Low }
+                "medium" { [TaskPriority]::Medium }
+                "high" { [TaskPriority]::High }
+            }
+            $tasks = $tasks | Where-Object { $_.Priority -eq $priorityEnum }
+        }
+        
+        if ($Category) {
+            $tasks = $tasks | Where-Object { $_.ProjectKey -eq $Category -or $_.Category -eq $Category }
+        }
+        
+        # AI: Return as array to maintain compatibility
+        return @($tasks)
+    }
+}
+
+#endregion
+
+#region Project Management Functions
+
+function Get-PmcProjects {
+    <#
+    .SYNOPSIS
+    Retrieves all projects from the data store
+    
+    .DESCRIPTION
+    Returns all PmcProject objects as an array
+    #>
+    [CmdletBinding()]
+    param()
+    
+    # AI: Return projects from strongly-typed list as array
+    return @($script:Data.Projects)
+}
+
+function Get-PmcProject {
+    <#
+    .SYNOPSIS
+    Retrieves a specific project by key
+    
+    .PARAMETER Key
+    The project key
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+    
+    # AI: Find project in list by key
+    return $script:Data.Projects | Where-Object { $_.Key -eq $Key } | Select-Object -First 1
+}
+
+function Add-PmcProject {
+    <#
+    .SYNOPSIS
+    Adds a new project to the data store
+    
+    .PARAMETER Project
+    The PmcProject object to add
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [PmcProject]$Project
+    )
+    
+    Invoke-WithErrorHandling -Component "DataManager.AddProject" -Context "Adding new project to data store" -ScriptBlock {
+        # AI: Check if project with same key already exists
+        $existing = $script:Data.Projects | Where-Object { $_.Key -eq $Project.Key } | Select-Object -First 1
+        
+        if ($existing) {
+            throw [StateMutationException]::new("Project with key '$($Project.Key)' already exists", @{ ProjectKey = $Project.Key })
+        }
+        
+        # AI: Add to strongly-typed project list
+        $script:Data.Projects.Add($Project)
+        $script:DataModified = $true
+        
+        Write-Log -Level Info -Message "Created project '$($Project.Name)' with key $($Project.Key)"
+        
+        # Auto-save if enabled
+        if ($script:Data.Settings.AutoSave) {
+            Save-UnifiedData
+        }
+        
+        # AI: Publish event for UI refresh
+        Publish-Event -EventName "Projects.Changed" -Data @{
+            Action = "Created"
+            ProjectKey = $Project.Key
+            Project = $Project
+        }
+        
+        return $Project
+    }
+}
+
+#endregion
+
+#region DataManager Class Definition
+
+# AI: Maintain class-based interface for compatibility with existing code
 class DataManager {
     hidden [hashtable] $DataStore
     hidden [string] $DataFilePath
     hidden [bool] $AutoSaveEnabled = $true
-    hidden [System.Timers.Timer] $AutoSaveTimer
     
     DataManager() {
         $this.DataStore = $script:Data
@@ -1001,71 +3171,69 @@ class DataManager {
     }
 
     [void] LoadData() {
-        Invoke-WithErrorHandling -Component "DataManager" -Context "LoadData" -ScriptBlock {
-            if (-not (Test-Path $this.DataFilePath)) {
-                Write-Log -Level Info -Message "No data file found, using defaults."
-                return
-            }
-            try {
-                $content = Get-Content -Path $this.DataFilePath -Raw
-                $loadedData = $content | ConvertFrom-Json -AsHashtable
-                
-                if ($loadedData.Tasks) {
-                    $this.DataStore.Tasks.Clear()
-                    foreach ($taskData in $loadedData.Tasks) {
-                        $this.DataStore.Tasks.Add([PmcTask]::FromLegacyFormat($taskData))
-                    }
-                }
-                if ($loadedData.Projects) {
-                    $this.DataStore.Projects.Clear()
-                    foreach ($projectData in $loadedData.Projects.Values) {
-                        $this.DataStore.Projects.Add([PmcProject]::FromLegacyFormat($projectData))
-                    }
-                }
-                if ($loadedData.Settings) {
-                    $this.DataStore.Settings = $loadedData.Settings
-                    $this.AutoSaveEnabled = $this.DataStore.Settings.AutoSave
-                }
-                Write-Log -Level Info -Message "Data loaded successfully from $($this.DataFilePath)"
-            } catch {
-                Write-Log -Level Error -Message "Failed to load or parse data file: $_. Using default data."
-            }
-        }
+        Load-UnifiedData
     }
 
     [void] SaveData() {
-        Invoke-WithErrorHandling -Component "DataManager" -Context "SaveData" -ScriptBlock {
-            $dataToSave = @{
-                Tasks = @($this.DataStore.Tasks | ForEach-Object { $_.ToLegacyFormat() })
-                Projects = @{}
-                Settings = $this.DataStore.Settings
-            }
-            $this.DataStore.Projects.ForEach({ param($p) $dataToSave.Projects[$p.Key] = $p.ToLegacyFormat() })
-            
-            $dataToSave | ConvertTo-Json -Depth 10 | Set-Content -Path $this.DataFilePath -Encoding UTF8
-            Write-Log -Level Debug -Message "Data saved successfully."
-        }
+        Save-UnifiedData
     }
 
     [PmcTask] AddTask([string]$Title, [string]$Description, [TaskPriority]$Priority, [string]$ProjectKey) {
-        return Invoke-WithErrorHandling -Component "DataManager" -Context "AddTask" -ScriptBlock {
-            $newTask = [PmcTask]::new($Title, $Description, $Priority, $ProjectKey)
-            $this.DataStore.Tasks.Add($newTask)
-            if ($this.AutoSaveEnabled) { $this.SaveData() }
-            Publish-Event -EventName "Tasks.Changed" -Data @{ Action = "Created"; Task = $newTask }
-            Write-Log -Level Info -Message "Created task '$($newTask.Title)'"
-            return $newTask
-        }
+        return Add-PmcTask -Title $Title -Description $Description -Priority $Priority.ToString() -Category $ProjectKey
     }
     
     [PmcTask[]] GetTasks() {
         return @($this.DataStore.Tasks)
     }
+    
+    [PmcProject[]] GetProjects() {
+        return @($this.DataStore.Projects)
+    }
 }
 
+#endregion
 
-# Export the factory function, which is the public entry point for this module.
-Export-ModuleMember -Function 'Initialize-DataManager'
+#region Private Helper Functions
+
+function Initialize-DataEventHandlers {
+    <#
+    .SYNOPSIS
+    Sets up event handlers for data operations
+    #>
+    [CmdletBinding()]
+    param()
+    
+    Invoke-WithErrorHandling -Component "DataManager.InitializeEventHandlers" -Context "Initializing data event handlers" -ScriptBlock {
+        # AI: Subscribe to refresh request events for backward compatibility
+        $null = Subscribe-Event -EventName "Tasks.RefreshRequested" -Handler {
+            param($EventData)
+            
+            # Simply publish the current task data
+            Publish-Event -EventName "Tasks.Changed" -Data @{
+                Action = "Refreshed"
+                Tasks = @($script:Data.Tasks)
+            }
+        }
+        
+        Write-Log -Level Debug -Message "Data event handlers initialized"
+    }
+}
+
+#endregion
+
+# Export public functions
+Export-ModuleMember -Function @(
+    'Initialize-DataManager',
+    'Add-PmcTask',
+    'Update-PmcTask', 
+    'Remove-PmcTask',
+    'Get-PmcTasks',
+    'Get-PmcProjects',
+    'Get-PmcProject',
+    'Add-PmcProject',
+    'Save-UnifiedData',
+    'Load-UnifiedData'
+)
 
 
 ####\modules\dialog-system.psm1
@@ -3042,7 +5210,10 @@ class PmcTask : ValidationBase {
             $task.Priority = try { [TaskPriority]::$($legacyData.priority) } catch { [TaskPriority]::Medium }
         }
         
-        $projectKey = $legacyData.project ?? $legacyData.Category ?? "General"
+        # AI: PowerShell 5.1 compatible null-coalescing
+        $projectKey = if ($legacyData.project) { $legacyData.project } 
+                      elseif ($legacyData.Category) { $legacyData.Category } 
+                      else { "General" }
         $task.ProjectKey = $projectKey
         $task.Category = $projectKey
         
@@ -3126,10 +5297,9 @@ class PmcProject : ValidationBase {
 #endregion
 
 # --- Export Section ---
-# AI: Make classes and enums available to other modules.
-Export-ModuleMember -Function * -Variable * -Alias @(
-    'TaskStatus', 'TaskPriority', 'BillingType', 'PmcTask', 'PmcProject'
-)
+# AI: Classes and enums are automatically exported in PowerShell modules
+# We only need to export any helper functions if they exist
+Export-ModuleMember -Function * -Variable *
 
 
 ####\modules\theme-manager.psm1
@@ -5660,305 +7830,880 @@ class TaskListScreen : Screen {
 
 
 ####\services\keybinding-service.psm1
-# ==============================================================================
-# PMC Terminal v5 - Class-Based Keybinding Service
-# Manages global and contextual keybindings for the application.
-# ==============================================================================
+# KeybindingService - Class-Based Implementation
+# Manages application keybindings with proper error handling and validation
+# AI: Updated with sophisticated keybinding features from R2 version
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = \"Stop\"
 
 # Import utilities
-Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
+Import-Module -Name \"$PSScriptRoot\\..\\utilities\\error-handling.psm1\" -Force
 
+# KeybindingService Class - Manages application-wide key bindings
 class KeybindingService {
-    # --- Properties ---
-    [hashtable] $KeyMap
-    [hashtable] $GlobalHandlers
+    [hashtable] $KeyMap = @{}
+    [hashtable] $GlobalHandlers = @{}
     [System.Collections.Generic.List[string]] $ContextStack
-
-    # --- Constructor ---
+    [bool] $EnableChords = $false
+    
     KeybindingService() {
         $this.ContextStack = [System.Collections.Generic.List[string]]::new()
-        $this.GlobalHandlers = @{}
         $this.InitializeDefaultBindings()
-        Write-Log -Level Info -Message "KeybindingService initialized." -Component "KeybindingService"
+        
+        Write-Log -Level Info -Message \"KeybindingService initialized\" -Component \"KeybindingService\"
     }
-
-    # --- Public Methods ---
-
+    
+    KeybindingService([bool]$enableChords) {
+        $this.ContextStack = [System.Collections.Generic.List[string]]::new()
+        $this.EnableChords = $enableChords
+        $this.InitializeDefaultBindings()
+        
+        Write-Log -Level Info -Message \"KeybindingService initialized with chords: $enableChords\" -Component \"KeybindingService\"
+    }
+    
+    hidden [void] InitializeDefaultBindings() {
+        # AI: Standard application keybindings
+        $this.KeyMap = @{
+            \"app.exit\" = @{ Key = \"Q\"; Modifiers = @(\"Ctrl\") }
+            \"app.help\" = @{ Key = [System.ConsoleKey]::F1; Modifiers = @() }
+            \"nav.back\" = @{ Key = [System.ConsoleKey]::Escape; Modifiers = @() }
+            \"nav.up\" = @{ Key = [System.ConsoleKey]::UpArrow; Modifiers = @() }
+            \"nav.down\" = @{ Key = [System.ConsoleKey]::DownArrow; Modifiers = @() }
+            \"nav.left\" = @{ Key = [System.ConsoleKey]::LeftArrow; Modifiers = @() }
+            \"nav.right\" = @{ Key = [System.ConsoleKey]::RightArrow; Modifiers = @() }
+            \"nav.select\" = @{ Key = [System.ConsoleKey]::Enter; Modifiers = @() }
+            \"nav.pageup\" = @{ Key = [System.ConsoleKey]::PageUp; Modifiers = @() }
+            \"nav.pagedown\" = @{ Key = [System.ConsoleKey]::PageDown; Modifiers = @() }
+            \"nav.home\" = @{ Key = [System.ConsoleKey]::Home; Modifiers = @() }
+            \"nav.end\" = @{ Key = [System.ConsoleKey]::End; Modifiers = @() }
+            \"nav.tab\" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @() }
+            \"nav.shifttab\" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @(\"Shift\") }
+            \"edit.delete\" = @{ Key = [System.ConsoleKey]::Delete; Modifiers = @() }
+            \"edit.backspace\" = @{ Key = [System.ConsoleKey]::Backspace; Modifiers = @() }
+            \"edit.new\" = @{ Key = \"n\"; Modifiers = @() }
+            \"edit.save\" = @{ Key = \"s\"; Modifiers = @(\"Ctrl\") }
+            \"app.refresh\" = @{ Key = [System.ConsoleKey]::F5; Modifiers = @() }
+        }
+    }
+    
+    [void] SetBinding([string]$actionName, [System.ConsoleKey]$key, [string[]]$modifiers) {
+        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"SetBinding:$actionName\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($actionName)) {
+                throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+            }
+            
+            $this.KeyMap[$actionName.ToLower()] = @{
+                Key = $key
+                Modifiers = if ($modifiers) { @($modifiers) } else { @() }
+            }
+            
+            Write-Log -Level Debug -Message \"Set keybinding: $actionName -> $key\" -Component \"KeybindingService\"
+        }
+    }
+    
+    [void] SetBinding([string]$actionName, [char]$key, [string[]]$modifiers) {
+        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"SetBinding:$actionName\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($actionName)) {
+                throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+            }
+            
+            $this.KeyMap[$actionName.ToLower()] = @{
+                Key = $key
+                Modifiers = if ($modifiers) { @($modifiers) } else { @() }
+            }
+            
+            Write-Log -Level Debug -Message \"Set keybinding: $actionName -> $key\" -Component \"KeybindingService\"
+        }
+    }
+    
     [void] SetBinding([string]$actionName, [System.ConsoleKeyInfo]$keyInfo) {
-        [ValidationBase]::ValidateNotEmpty($actionName, "actionName")
+        if ([string]::IsNullOrWhiteSpace($actionName)) {
+            throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+        }
         
         $modifiers = @()
-        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control) { $modifiers += "Ctrl" }
-        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) { $modifiers += "Alt" }
-        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) { $modifiers += "Shift" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control) { $modifiers += \"Ctrl\" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) { $modifiers += \"Alt\" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) { $modifiers += \"Shift\" }
 
         $this.KeyMap[$actionName.ToLower()] = @{
             Key = $keyInfo.Key
             KeyChar = $keyInfo.KeyChar
             Modifiers = $modifiers
         }
-        Write-Log -Level Debug -Message "Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))" -Component "KeybindingService"
+        Write-Log -Level Debug -Message \"Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))\" -Component \"KeybindingService\"
+    }
+    
+    [void] RemoveBinding([string]$actionName) {
+        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"RemoveBinding:$actionName\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($actionName)) {
+                return
+            }
+            
+            $normalizedName = $actionName.ToLower()
+            if ($this.KeyMap.ContainsKey($normalizedName)) {
+                $this.KeyMap.Remove($normalizedName)
+                Write-Log -Level Debug -Message \"Removed keybinding: $actionName\" -Component \"KeybindingService\"
+            }
+        }
+    }
+    
+    [bool] IsAction([string]$actionName, [System.ConsoleKeyInfo]$keyInfo) {
+        return $this.IsAction($actionName, $keyInfo, $null)
+    }
+    
+    [bool] IsAction([string]$actionName, [System.ConsoleKeyInfo]$keyInfo, [string]$context) {
+        return Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"IsAction:$actionName\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($actionName)) {
+                return $false
+            }
+            
+            $normalizedName = $actionName.ToLower()
+            if (-not $this.KeyMap.ContainsKey($normalizedName)) {
+                return $false
+            }
+            
+            $binding = $this.KeyMap[$normalizedName]
+            
+            # Check if the key matches
+            $keyMatches = $false
+            if ($binding.Key -is [System.ConsoleKey]) {
+                $keyMatches = ($keyInfo.Key -eq $binding.Key)
+            }
+            elseif ($binding.Key -is [char]) {
+                $keyMatches = ($keyInfo.KeyChar -eq $binding.Key)
+            }
+            elseif ($binding.ContainsKey('KeyChar') -and $binding.KeyChar -ne [char]0) {
+                # Character-based binding (case-insensitive)
+                $keyMatches = $keyInfo.KeyChar.ToString().Equals($binding.KeyChar.ToString(), [System.StringComparison]::OrdinalIgnoreCase)
+            }
+            else {
+                # Try string comparison for backward compatibility
+                $keyString = $binding.Key.ToString()
+                if ($keyString.Length -eq 1) {
+                    $keyMatches = ($keyInfo.KeyChar.ToString().ToUpper() -eq $keyString.ToUpper())
+                }
+                else {
+                    # Try to match against ConsoleKey enum
+                    try {
+                        $consoleKey = [System.ConsoleKey]::Parse([System.ConsoleKey], $keyString, $true)
+                        $keyMatches = ($keyInfo.Key -eq $consoleKey)
+                    }
+                    catch {
+                        $keyMatches = $false
+                    }
+                }
+            }
+            
+            if (-not $keyMatches) {
+                return $false
+            }
+            
+            # Check modifiers
+            $hasCtrl = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control) -ne 0
+            $hasAlt = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) -ne 0
+            $hasShift = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) -ne 0
+            
+            $expectedCtrl = $binding.Modifiers -contains \"Ctrl\"
+            $expectedAlt = $binding.Modifiers -contains \"Alt\"
+            $expectedShift = $binding.Modifiers -contains \"Shift\"
+            
+            return ($hasCtrl -eq $expectedCtrl) -and ($hasAlt -eq $expectedAlt) -and ($hasShift -eq $expectedShift)
+        }
     }
     
     [string] GetAction([System.ConsoleKeyInfo]$keyInfo) {
-        return Invoke-WithErrorHandling -Component "KeybindingService" -Context "GetAction" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"GetAction\" -ScriptBlock {
             foreach ($actionName in $this.KeyMap.Keys) {
-                if ($this.IsActionMatch($actionName, $keyInfo)) {
+                if ($this.IsAction($actionName, $keyInfo)) {
                     return $actionName
                 }
             }
             return $null
         }
     }
-
+    
     [void] RegisterGlobalHandler([string]$actionName, [scriptblock]$handler) {
-        Invoke-WithErrorHandling -Component "KeybindingService" -Context "RegisterGlobalHandler" -ScriptBlock {
-            [ValidationBase]::ValidateNotEmpty($actionName, "actionName")
-            if (-not $handler) { throw [System.ArgumentNullException]::new("handler") }
+        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"RegisterGlobalHandler:$actionName\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($actionName)) {
+                throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+            }
+            if ($null -eq $handler) {
+                throw [System.ArgumentNullException]::new(\"handler\", \"Handler cannot be null\")
+            }
             
             $this.GlobalHandlers[$actionName.ToLower()] = $handler
+            Write-Log -Level Debug -Message \"Registered global handler: $actionName\" -Component \"KeybindingService\"
         }
     }
-
+    
+    [object] HandleKey([System.ConsoleKeyInfo]$keyInfo) {
+        return $this.HandleKey($keyInfo, $null)
+    }
+    
+    [object] HandleKey([System.ConsoleKeyInfo]$keyInfo, [string]$context) {
+        return Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"HandleKey\" -ScriptBlock {
+            # Check all registered actions
+            foreach ($action in $this.KeyMap.Keys) {
+                if ($this.IsAction($action, $keyInfo, $context)) {
+                    # Execute global handler if registered
+                    if ($this.GlobalHandlers.ContainsKey($action)) {
+                        Write-Log -Level Debug -Message \"Executing global handler: $action\" -Component \"KeybindingService\"
+                        try {
+                            return & $this.GlobalHandlers[$action] -KeyInfo $keyInfo -Context $context
+                        }
+                        catch {
+                            Write-Log -Level Error -Message \"Global handler failed for '$action': $_\" -Component \"KeybindingService\"
+                            return $null
+                        }
+                    }
+                    
+                    # Return the action name for the caller to handle
+                    return $action
+                }
+            }
+            
+            return $null
+        }
+    }
+    
     [void] PushContext([string]$context) {
-        [ValidationBase]::ValidateNotEmpty($context, "context")
-        $this.ContextStack.Add($context)
-        Write-Log -Level Debug -Message "Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
+        if (-not [string]::IsNullOrWhiteSpace($context)) {
+            $this.ContextStack.Add($context)
+            Write-Log -Level Debug -Message \"Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))\" -Component \"KeybindingService\"
+        }
     }
-
+    
     [string] PopContext() {
-        if ($this.ContextStack.Count -eq 0) { return $null }
-        
-        $context = $this.ContextStack[-1]
-        $this.ContextStack.RemoveAt($this.ContextStack.Count - 1)
-        Write-Log -Level Debug -Message "Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
-        return $context
+        if ($this.ContextStack.Count -gt 0) {
+            $context = $this.ContextStack[-1]
+            $this.ContextStack.RemoveAt($this.ContextStack.Count - 1)
+            Write-Log -Level Debug -Message \"Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))\" -Component \"KeybindingService\"
+            return $context
+        }
+        return $null
     }
-
+    
     [string] GetCurrentContext() {
         if ($this.ContextStack.Count -gt 0) {
             return $this.ContextStack[-1]
         }
-        return "global"
+        return \"global\"
     }
-
+    
     [string] GetBindingDescription([string]$actionName) {
+        if ([string]::IsNullOrWhiteSpace($actionName)) {
+            return $null
+        }
+        
         $normalizedName = $actionName.ToLower()
-        if (-not $this.KeyMap.ContainsKey($normalizedName)) { return "Unbound" }
+        if (-not $this.KeyMap.ContainsKey($normalizedName)) {
+            return \"Unbound\"
+        }
         
         $binding = $this.KeyMap[$normalizedName]
-        $keyStr = if ($binding.KeyChar -eq [char]0) { $binding.Key.ToString() } else { $binding.KeyChar.ToString().ToUpper() }
+        $keyStr = if ($binding.ContainsKey('KeyChar') -and $binding.KeyChar -ne [char]0) {
+            $binding.KeyChar.ToString().ToUpper()
+        } elseif ($binding.Key -is [System.ConsoleKey]) {
+            $binding.Key.ToString()
+        } else {
+            $binding.Key.ToString().ToUpper()
+        }
         
         if ($binding.Modifiers.Count -gt 0) {
-            return "$($binding.Modifiers -join '+') + $keyStr"
+            return \"$($binding.Modifiers -join '+') + $keyStr\"
         }
+        
         return $keyStr
     }
     
-    # --- Private Helper Methods ---
-
-    hidden [void] InitializeDefaultBindings() {
-        $this.KeyMap = @{
-            "app.exit"     = @{ Key = [System.ConsoleKey]::Q; Modifiers = @("Ctrl") }
-            "nav.back"     = @{ Key = [System.ConsoleKey]::Escape; Modifiers = @() }
-            "nav.up"       = @{ Key = [System.ConsoleKey]::UpArrow; Modifiers = @() }
-            "nav.down"     = @{ Key = [System.ConsoleKey]::DownArrow; Modifiers = @() }
-            "nav.left"     = @{ Key = [System.ConsoleKey]::LeftArrow; Modifiers = @() }
-            "nav.right"    = @{ Key = [System.ConsoleKey]::RightArrow; Modifiers = @() }
-            "nav.select"   = @{ Key = [System.ConsoleKey]::Enter; Modifiers = @() }
-            "nav.tab"      = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @() }
-            "nav.shifttab" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @("Shift") }
-            "edit.delete"  = @{ Key = [System.ConsoleKey]::Delete; Modifiers = @() }
-            "edit.new"     = @{ KeyChar = 'n'; Modifiers = @() }
-            "edit.save"    = @{ KeyChar = 's'; Modifiers = @("Ctrl") }
+    [hashtable] GetAllBindings() {
+        return $this.GetAllBindings($false)
+    }
+    
+    [hashtable] GetAllBindings([bool]$groupByCategory) {
+        if (-not $groupByCategory) {
+            return $this.KeyMap.Clone()
+        }
+        
+        # Group by category (part before the dot)
+        $grouped = @{}
+        foreach ($action in $this.KeyMap.Keys) {
+            $parts = $action.Split('.')
+            $category = if ($parts.Count -gt 1) { $parts[0] } else { \"General\" }
+            if (-not $grouped.ContainsKey($category)) {
+                $grouped[$category] = @{}
+            }
+            $grouped[$category][$action] = $this.KeyMap[$action]
+        }
+        
+        return $grouped
+    }
+    
+    [void] ExportBindings([string]$path) {
+        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"ExportBindings\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                throw [System.ArgumentException]::new(\"Path cannot be null or empty\", \"path\")
+            }
+            
+            $this.KeyMap | ConvertTo-Json -Depth 3 | Out-File -FilePath $path -Encoding UTF8
+            Write-Log -Level Info -Message \"Exported keybindings to: $path\" -Component \"KeybindingService\"
         }
     }
-
-    hidden [bool] IsActionMatch([string]$actionName, [System.ConsoleKeyInfo]$keyInfo) {
-        $binding = $this.KeyMap[$actionName]
-        if (-not $binding) { return $false }
-        
-        # Match modifiers
-        $hasCtrl = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control)
-        $hasAlt = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt)
-        $hasShift = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift)
-        
-        $reqCtrl = "Ctrl" -in $binding.Modifiers
-        $reqAlt = "Alt" -in $binding.Modifiers
-        $reqShift = "Shift" -in $binding.Modifiers
-
-        if (($hasCtrl -ne $reqCtrl) -or ($hasAlt -ne $reqAlt) -or ($hasShift -ne $reqShift)) {
-            return $false
-        }
-
-        # Match key
-        if ($binding.KeyChar -and $binding.KeyChar -ne [char]0) {
-            # Character-based binding (case-insensitive)
-            return $keyInfo.KeyChar.ToString().Equals($binding.KeyChar.ToString(), [System.StringComparison]::OrdinalIgnoreCase)
-        } else {
-            # ConsoleKey-based binding
-            return $keyInfo.Key -eq $binding.Key
+    
+    [void] ImportBindings([string]$path) {
+        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"ImportBindings\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                throw [System.ArgumentException]::new(\"Path cannot be null or empty\", \"path\")
+            }
+            
+            if (-not (Test-Path $path)) {
+                Write-Log -Level Warning -Message \"Keybindings file not found: $path\" -Component \"KeybindingService\"
+                return
+            }
+            
+            try {
+                $imported = Get-Content $path -Raw | ConvertFrom-Json
+                foreach ($prop in $imported.PSObject.Properties) {
+                    $this.KeyMap[$prop.Name] = @{
+                        Key = $prop.Value.Key
+                        Modifiers = $prop.Value.Modifiers
+                    }
+                    # Handle KeyChar if present
+                    if ($prop.Value.PSObject.Properties.Name -contains 'KeyChar') {
+                        $this.KeyMap[$prop.Name].KeyChar = $prop.Value.KeyChar
+                    }
+                }
+                Write-Log -Level Info -Message \"Imported keybindings from: $path\" -Component \"KeybindingService\"
+            }
+            catch {
+                Write-Log -Level Error -Message \"Failed to import keybindings from '$path': $_\" -Component \"KeybindingService\"
+                throw
+            }
         }
     }
 }
 
-# Export the KeybindingService class
-Export-ModuleMember -Class 'KeybindingService'
+# Initialize function for backward compatibility
+function Initialize-KeybindingService {
+    param(
+        [bool]$EnableChords = $false,
+        [hashtable]$CustomBindings = @{}
+    )
+    
+    $service = [KeybindingService]::new($EnableChords)
+    
+    # Apply custom bindings if provided
+    if ($CustomBindings.Count -gt 0) {
+        foreach ($action in $CustomBindings.Keys) {
+            $binding = $CustomBindings[$action]
+            if ($binding.Key -and $binding.Modifiers) {
+                $service.SetBinding($action, $binding.Key, $binding.Modifiers)
+            }
+        }
+    }
+    
+    return $service
+}
+
+# Export the functions and classes
+Export-ModuleMember -Function Initialize-KeybindingService -Class 'KeybindingService'"
 
 
 ####\services\navigation-service-class.psm1
-# ==============================================================================
-# PMC Terminal v5 - Class-Based Navigation Service
-# Manages screen transitions, history, and creation via a ScreenFactory.
-# ==============================================================================
+# Navigation Service - Class-Based Implementation
+# Manages screen navigation with proper error handling and validation
+# AI: Updated with sophisticated navigation features from R2 version
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = \"Stop\"
 
 using namespace System.Collections.Generic
 
-# Import dependencies
-Import-Module "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
-Import-Module "$PSScriptRoot\..\utilities\event-system.psm1" -Force
-Import-Module "$PSScriptRoot\..\components\ui-classes.psm1" -Force
-
-# AI: Import ALL screen classes that the factory needs to know about.
-Import-Module "$PSScriptRoot\..\screens\dashboard\dashboard-screen-class.psm1" -Force
-Import-Module "$PSScriptRoot\..\screens\task-list-screen-class.psm1" -Force
-Import-Module "$PSScriptRoot\..\screens\new-task-screen-class.psm1" -Force
-
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
-#region --- Helper Class: ScreenFactory ---
-# AI: The ScreenFactory is now an internal helper class within this module,
-# as it's exclusively used by the NavigationService.
+#region Screen Factory Class for creating screen instances
 
 class ScreenFactory {
-    [hashtable]$Services
-    [Dictionary[string, type]]$ScreenTypes
-
+    [hashtable] $Services
+    [hashtable] $ScreenTypes = @{}
+    
     ScreenFactory([hashtable]$services) {
-        if (-not $services) { throw [System.ArgumentNullException]::new("services") }
+        if ($null -eq $services) {
+            throw [System.ArgumentNullException]::new(\"services\", \"Services cannot be null\")
+        }
         $this.Services = $services
-        $this.ScreenTypes = [Dictionary[string, type]]::new()
         $this.RegisterDefaultScreens()
     }
-
+    
     hidden [void] RegisterDefaultScreens() {
-        Write-Log -Level Debug -Message "Registering all known screen types..." -Component "ScreenFactory"
-        $this.ScreenTypes["DashboardScreen"] = [DashboardScreen]
-        $this.ScreenTypes["TaskListScreen"] = [TaskListScreen]
-        $this.ScreenTypes["NewTaskScreen"] = [NewTaskScreen]
-        # AI: Add future screen classes here as they are created.
-        # e.g., $this.ScreenTypes["ProjectScreen"] = [ProjectScreen]
-    }
-
-    [Screen] CreateScreen([string]$screenName, [hashtable]$parameters) {
-        if (-not $this.ScreenTypes.ContainsKey($screenName)) {
-            throw [System.InvalidOperationException]::new("Unknown screen type: '$screenName'. Ensure it is registered in the ScreenFactory.")
+        # AI: Register factory functions for both class-based and hashtable-based screens
+        $this.ScreenTypes = @{
+            \"DashboardScreen\" = { param($services) $this.CreateClassBasedScreen(\"DashboardScreen\", $services) }
+            \"TaskListScreen\" = { param($services) $this.CreateClassBasedScreen(\"TaskListScreen\", $services) }
+            \"NewTaskScreen\" = { param($services) $this.CreateClassBasedScreen(\"NewTaskScreen\", $services) }
         }
-
-        $screenType = $this.ScreenTypes[$screenName]
-        Write-Log -Level Debug -Message "Creating instance of screen: $($screenType.Name)" -Component "ScreenFactory"
-
-        # Create the new screen instance, passing the services collection to its constructor.
-        $screen = $screenType::new($this.Services)
-
-        # Pass any additional parameters to the screen's state.
-        if ($parameters) {
-            foreach ($key in $parameters.Keys) {
-                $screen.State[$key] = $parameters[$key]
+        
+        # AI: Also support function-based screens for backward compatibility
+        if (Get-Command \"Get-DashboardScreen\" -ErrorAction SilentlyContinue) {
+            $this.ScreenTypes[\"DashboardScreen\"] = { param($services) Get-DashboardScreen -Services $services }
+        }
+        if (Get-Command \"Get-TaskManagementScreen\" -ErrorAction SilentlyContinue) {
+            $this.ScreenTypes[\"TaskManagementScreen\"] = { param($services) Get-TaskManagementScreen -Services $services }
+        }
+    }
+    
+    hidden [object] CreateClassBasedScreen([string]$screenName, [hashtable]$services) {
+        # AI: Try to create class-based screen first, fallback to function-based
+        switch ($screenName) {
+            \"DashboardScreen\" {
+                if ([DashboardScreen] -as [type]) {
+                    return [DashboardScreen]::new($services)
+                }
+            }
+            \"TaskListScreen\" {
+                if ([TaskListScreen] -as [type]) {
+                    return [TaskListScreen]::new($services)
+                }
+            }
+            \"NewTaskScreen\" {
+                if ([NewTaskScreen] -as [type]) {
+                    return [NewTaskScreen]::new($services)
+                }
             }
         }
-        return $screen
+        
+        # Fallback: try to find and call a function-based screen creator
+        $functionName = \"Get-$screenName\"
+        if (Get-Command $functionName -ErrorAction SilentlyContinue) {
+            return & $functionName -Services $services
+        }
+        
+        throw [System.InvalidOperationException]::new(\"Unable to create screen: $screenName\")
+    }
+    
+    [void] RegisterScreen([string]$name, [scriptblock]$factory) {
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"name\")
+        }
+        if ($null -eq $factory) {
+            throw [System.ArgumentNullException]::new(\"factory\", \"Screen factory cannot be null\")
+        }
+        
+        $this.ScreenTypes[$name] = $factory
+        Write-Log -Level Debug -Message \"Registered screen factory: $name\"
+    }
+    
+    [object] CreateScreen([string]$screenName) {
+        return $this.CreateScreen($screenName, @{})
+    }
+    
+    [object] CreateScreen([string]$screenName, [hashtable]$parameters) {
+        if ([string]::IsNullOrWhiteSpace($screenName)) {
+            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+        }
+        
+        if (-not $this.ScreenTypes.ContainsKey($screenName)) {
+            $availableScreens = ($this.ScreenTypes.Keys | Sort-Object) -join \", \"
+            throw [System.InvalidOperationException]::new(
+                \"Unknown screen type: '$screenName'. Available screens: $availableScreens\"
+            )
+        }
+        
+        try {
+            $factory = $this.ScreenTypes[$screenName]
+            $screen = & $factory -services $this.Services
+            
+            if ($null -eq $screen) {
+                throw [System.InvalidOperationException]::new(\"Screen factory returned null for '$screenName'\")
+            }
+            
+            # Store services reference on screen for later use
+            if ($screen -is [hashtable] -and -not $screen._services) {
+                $screen._services = $this.Services
+            }
+            elseif ($screen.PSObject.Properties.Name -contains \"Services\" -and -not $screen.Services) {
+                $screen.Services = $this.Services
+            }
+            
+            # Apply parameters to screen state
+            if ($parameters -and $parameters.Count -gt 0) {
+                if ($screen -is [hashtable] -and $screen.ContainsKey(\"State\")) {
+                    foreach ($key in $parameters.Keys) {
+                        $screen.State[$key] = $parameters[$key]
+                    }
+                }
+                elseif ($screen.PSObject.Properties.Name -contains \"State\") {
+                    foreach ($key in $parameters.Keys) {
+                        $screen.State[$key] = $parameters[$key]
+                    }
+                }
+            }
+            
+            Write-Log -Level Debug -Message \"Created screen: $screenName\"
+            return $screen
+        }
+        catch {
+            Write-Log -Level Error -Message \"Failed to create screen '$screenName': $_\"
+            throw
+        }
     }
 }
+
 #endregion
 
-#region --- Main Class: NavigationService ---
+#region Navigation Service Class - Manages screen stack and navigation
 
 class NavigationService {
-    [Stack[Screen]]$ScreenStack
-    [Screen]$CurrentScreen
-    [ScreenFactory]$ScreenFactory
-    [hashtable]$Services
-
+    [System.Collections.Generic.Stack[object]] $ScreenStack
+    [ScreenFactory] $ScreenFactory
+    [object] $CurrentScreen
+    [hashtable] $Services
+    [int] $MaxStackDepth = 10
+    [hashtable] $NavigationHistory = @{}
+    [hashtable] $RouteMap = @{}
+    
     NavigationService([hashtable]$services) {
-        if (-not $services) { throw [System.ArgumentNullException]::new("services") }
+        if ($null -eq $services) {
+            throw [System.ArgumentNullException]::new(\"services\", \"Services cannot be null\")
+        }
+        
         $this.Services = $services
-        $this.ScreenStack = [Stack[Screen]]::new()
+        $this.ScreenStack = [System.Collections.Generic.Stack[object]]::new()
         $this.ScreenFactory = [ScreenFactory]::new($services)
+        $this.InitializeRoutes()
+        
+        Write-Log -Level Info -Message \"NavigationService initialized\"
     }
-
-    [void] PushScreen([string]$screenName, [hashtable]$parameters = @{}) {
-        Invoke-ClassMethod -ClassName "NavigationService" -MethodName "PushScreen" -ScriptBlock {
-            Write-Log -Level Info -Message "Navigating to screen: $screenName" -Data $parameters
-
-            # Create the new screen instance.
-            $newScreen = $this.ScreenFactory.CreateScreen($screenName, $parameters)
-
-            # If a screen is already active, call its OnExit and push it to the stack.
-            if ($this.CurrentScreen) {
-                $this.CallScreenMethod($this.CurrentScreen, "OnExit")
-                $this.ScreenStack.Push($this.CurrentScreen)
-            }
-
-            $this.CurrentScreen = $newScreen
-            
-            # Initialize the new screen. This is where the screen builds its UI.
-            $this.CallScreenMethod($newScreen, "Initialize")
-            $this.CallScreenMethod($newScreen, "OnEnter")
-
-            # Update the TUI Engine's state
-            if ($global:TuiState) {
-                $global:TuiState.CurrentScreen = $newScreen
-                Request-TuiRefresh
-            }
-            Publish-Event -EventName "Navigation.Pushed" -Data @{ Screen = $screenName }
+    
+    hidden [void] InitializeRoutes() {
+        # AI: Map URL-like paths to screen names
+        $this.RouteMap = @{
+            \"/\" = \"DashboardScreen\"
+            \"/dashboard\" = \"DashboardScreen\"
+            \"/tasks\" = \"TaskListScreen\"
+            \"/new-task\" = \"NewTaskScreen\"
         }
     }
-
+    
+    [void] RegisterRoute([string]$path, [string]$screenName) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            throw [System.ArgumentException]::new(\"Route path cannot be null or empty\", \"path\")
+        }
+        if ([string]::IsNullOrWhiteSpace($screenName)) {
+            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+        }
+        
+        $this.RouteMap[$path] = $screenName
+        Write-Log -Level Debug -Message \"Registered route: $path -> $screenName\"
+    }
+    
+    [void] PushScreen([string]$screenName) {
+        $this.PushScreen($screenName, @{})
+    }
+    
+    [void] PushScreen([string]$screenName, [hashtable]$parameters) {
+        Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"PushScreen:$screenName\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($screenName)) {
+                throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+            }
+            
+            # Check stack depth limit
+            if ($this.ScreenStack.Count -ge $this.MaxStackDepth) {
+                throw [System.InvalidOperationException]::new(
+                    \"Navigation stack depth limit reached ($($this.MaxStackDepth))\"
+                )
+            }
+            
+            Write-Log -Level Info -Message \"Pushing screen: $screenName\"
+            
+            # Handle current screen exit
+            if ($null -ne $this.CurrentScreen) {
+                try {
+                    $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                    $this.ScreenStack.Push($this.CurrentScreen)
+                }
+                catch {
+                    Write-Log -Level Warning -Message \"Error during current screen cleanup: $_\"
+                }
+            }
+            
+            # Create new screen
+            $newScreen = $this.ScreenFactory.CreateScreen($screenName, $parameters)
+            
+            # Set as current screen
+            $this.CurrentScreen = $newScreen
+            
+            # Initialize the new screen
+            try {
+                $this.CallScreenMethod($newScreen, \"Initialize\", $this.Services)
+                $this.CallScreenMethod($newScreen, \"OnEnter\")
+            }
+            catch {
+                Write-Log -Level Error -Message \"Failed to initialize screen '$screenName': $_\"
+                throw
+            }
+            
+            # Track navigation history
+            $this.TrackNavigation($screenName, \"Push\")
+            
+            # Update TUI state if available
+            if ($global:TuiState) {
+                $global:TuiState.CurrentScreen = $newScreen
+                if (Get-Command \"Request-TuiRefresh\" -ErrorAction SilentlyContinue) {
+                    Request-TuiRefresh
+                }
+            }
+            
+            # Publish navigation event
+            if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+                # AI: Ensure event data is serializable
+                $eventData = @{
+                    Screen = $screenName
+                    Action = \"Push\"
+                    StackDepth = $this.ScreenStack.Count + 1
+                }
+                
+                # AI: Only include parameters if they're simple types
+                if ($parameters -and $parameters.Count -gt 0) {
+                    $simpleParams = @{}
+                    foreach ($key in $parameters.Keys) {
+                        $value = $parameters[$key]
+                        if ($value -is [string] -or $value -is [int] -or $value -is [bool] -or $value -is [datetime]) {
+                            $simpleParams[$key] = $value
+                        }
+                    }
+                    if ($simpleParams.Count -gt 0) {
+                        $eventData.Parameters = $simpleParams
+                    }
+                }
+                
+                Publish-Event -EventName \"Navigation.ScreenChanged\" -Data $eventData
+            }
+            
+            Write-Log -Level Debug -Message \"Screen '$screenName' pushed successfully. Stack depth: $($this.ScreenStack.Count + 1)\"
+        }
+    }
+    
     [bool] PopScreen() {
-        return Invoke-ClassMethod -ClassName "NavigationService" -MethodName "PopScreen" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"PopScreen\" -ScriptBlock {
             if ($this.ScreenStack.Count -eq 0) {
-                Write-Log -Level Warning -Message "Cannot pop screen: stack is empty."
+                Write-Log -Level Warning -Message \"Cannot pop screen: stack is empty\"
                 return $false
             }
             
-            $this.CallScreenMethod($this.CurrentScreen, "OnExit")
-            $this.CurrentScreen = $this.ScreenStack.Pop()
-            $this.CallScreenMethod($this.CurrentScreen, "OnResume")
-
-            if ($global:TuiState) {
-                $global:TuiState.CurrentScreen = $this.CurrentScreen
-                Request-TuiRefresh
+            Write-Log -Level Info -Message \"Popping screen\"
+            
+            # Exit current screen
+            if ($null -ne $this.CurrentScreen) {
+                try {
+                    $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                }
+                catch {
+                    Write-Log -Level Warning -Message \"Error during screen exit: $_\"
+                }
             }
-            Publish-Event -EventName "Navigation.Popped" -Data @{ Screen = $this.CurrentScreen.Name }
+            
+            # Pop previous screen
+            $this.CurrentScreen = $this.ScreenStack.Pop()
+            
+            # Resume previous screen
+            if ($null -ne $this.CurrentScreen) {
+                try {
+                    $this.CallScreenMethod($this.CurrentScreen, \"OnResume\")
+                }
+                catch {
+                    Write-Log -Level Warning -Message \"Error during screen resume: $_\"
+                }
+                
+                # Update TUI state
+                if ($global:TuiState) {
+                    $global:TuiState.CurrentScreen = $this.CurrentScreen
+                    if (Get-Command \"Request-TuiRefresh\" -ErrorAction SilentlyContinue) {
+                        Request-TuiRefresh
+                    }
+                }
+            }
+            
+            # Publish event
+            if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+                $screenName = if ($this.CurrentScreen -is [hashtable] -and $this.CurrentScreen.Name) {
+                    $this.CurrentScreen.Name
+                } elseif ($this.CurrentScreen.PSObject.Properties.Name -contains \"Name\") {
+                    $this.CurrentScreen.Name
+                } else {
+                    $null
+                }
+                
+                Publish-Event -EventName \"Navigation.ScreenPopped\" -Data @{
+                    CurrentScreen = $screenName
+                    StackDepth = $this.ScreenStack.Count
+                }
+            }
+            
             return $true
         }
     }
-
-    # Helper to safely call methods that might not exist on all screen objects.
-    hidden [void] CallScreenMethod([Screen]$screen, [string]$methodName) {
-        if (-not $screen) { return }
-        
-        # Check if the method exists on the class before calling it.
-        $method = $screen.GetType().GetMethod($methodName)
-        if ($method) {
+    
+    [bool] GoTo([string]$path) {
+        return $this.GoTo($path, @{})
+    }
+    
+    [bool] GoTo([string]$path, [hashtable]$parameters) {
+        return Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"GoTo:$path\" -ScriptBlock {
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                throw [System.ArgumentException]::new(\"Navigation path cannot be null or empty\", \"path\")
+            }
+            
+            Write-Log -Level Info -Message \"Navigating to path: $path\"
+            
+            # Handle special cases
+            if ($path -eq \"/exit\") {
+                $this.RequestExit()
+                return $true
+            }
+            
+            # Map path to screen name
+            if (-not $this.RouteMap.ContainsKey($path)) {
+                $availableRoutes = ($this.RouteMap.Keys | Sort-Object) -join \", \"
+                Write-Log -Level Warning -Message \"Unknown navigation path: $path. Available routes: $availableRoutes\"
+                return $false
+            }
+            
+            $screenName = $this.RouteMap[$path]
+            
             try {
-                $method.Invoke($screen, @())
+                $this.PushScreen($screenName, $parameters)
+                return $true
             }
             catch {
-                Write-Log -Level Error -Message "Error calling '$methodName' on screen '$($screen.Name)': $_"
+                Write-Log -Level Error -Message \"Failed to navigate to '$screenName' via path '$path': $_\"
+                return $false
             }
         }
     }
+    
+    [void] RequestExit() {
+        Write-Log -Level Info -Message \"Exit requested\"
+        
+        # Clean up all screens
+        while ($this.ScreenStack.Count -gt 0) {
+            try {
+                $this.PopScreen()
+            }
+            catch {
+                Write-Log -Level Warning -Message \"Error during exit cleanup: $_\"
+            }
+        }
+        
+        # Exit current screen
+        if ($null -ne $this.CurrentScreen) {
+            try {
+                $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+            }
+            catch {
+                Write-Log -Level Warning -Message \"Error during final screen cleanup: $_\"
+            }
+        }
+        
+        # Stop TUI engine if available
+        if (Get-Command \"Stop-TuiEngine\" -ErrorAction SilentlyContinue) {
+            Stop-TuiEngine
+        }
+        
+        # Publish exit event
+        if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+            Publish-Event -EventName \"Application.Exit\" -Data @{}
+        }
+    }
+    
+    [object] GetCurrentScreen() {
+        return $this.CurrentScreen
+    }
+    
+    [int] GetStackDepth() {
+        return $this.ScreenStack.Count
+    }
+    
+    [string[]] GetAvailableRoutes() {
+        return $this.RouteMap.Keys | Sort-Object
+    }
+    
+    [bool] IsValidRoute([string]$path) {
+        return $this.RouteMap.ContainsKey($path)
+    }
+    
+    [hashtable] GetNavigationStats() {
+        return $this.NavigationHistory.Clone()
+    }
+    
+    hidden [void] CallScreenMethod([object]$screen, [string]$methodName) {
+        $this.CallScreenMethod($screen, $methodName, $null)
+    }
+    
+    hidden [void] CallScreenMethod([object]$screen, [string]$methodName, [object]$parameter) {
+        if ($null -eq $screen) {
+            return
+        }
+        
+        try {
+            # Handle both class-based and hashtable-based screens
+            if ($screen -is [hashtable] -and $screen.ContainsKey($methodName)) {
+                $method = $screen[$methodName]
+                if ($method -is [scriptblock]) {
+                    if ($null -ne $parameter) {
+                        & $method -self $screen -parameter $parameter
+                    } else {
+                        & $method -self $screen
+                    }
+                }
+            }
+            elseif ($screen.PSObject.Methods.Name -contains $methodName) {
+                # Class-based screen
+                if ($null -ne $parameter) {
+                    $screen.$methodName($parameter)
+                } else {
+                    $screen.$methodName()
+                }
+            }
+        }
+        catch {
+            Write-Log -Level Warning -Message \"Error calling screen method '$methodName': $_\"
+        }
+    }
+    
+    hidden [void] TrackNavigation([string]$screenName, [string]$action) {
+        $timestamp = [DateTime]::UtcNow
+        
+        if (-not $this.NavigationHistory.ContainsKey($screenName)) {
+            $this.NavigationHistory[$screenName] = @{
+                VisitCount = 0
+                LastVisit = $null
+                FirstVisit = $timestamp
+            }
+        }
+        
+        $this.NavigationHistory[$screenName].VisitCount++
+        $this.NavigationHistory[$screenName].LastVisit = $timestamp
+        
+        Write-Log -Level Debug -Message \"Tracked navigation: $screenName ($action)\"
+    }
 }
+
 #endregion
 
-# Export the NavigationService class
-Export-ModuleMember -Class 'NavigationService'
+# Initialize function for backward compatibility
+function Initialize-NavigationService {
+    param([hashtable]$Services)
+    
+    if (-not $Services) {
+        throw [System.ArgumentNullException]::new(\"Services\", \"Services parameter is required\")
+    }
+    
+    return [NavigationService]::new($Services)
+}
+
+# Export the functions and classes
+Export-ModuleMember -Function Initialize-NavigationService -Class 'NavigationService', 'ScreenFactory'"
 
 
 ####\utilities\DO_NOT_USE\file_util.ps1
@@ -8100,110 +10845,327 @@ Export-ModuleMember -Function @(
 )
 
 
-####\_CLASSY.ps1
-# ==============================================================================
-# PMC Terminal v5 - Unified Class-Based Application Entry Point
-# ==============================================================================
+####\_CLASSY-MAIN.ps1
+#
+# FILE: _CLASSY-MAIN.ps1
+# PURPOSE: PMC Terminal v5 "Helios" - Class-Based Main Entry Point
+# AI: This file has been refactored to incorporate the sophisticated module loading and
+#     service initialization patterns from the R2 version, adapted for class-based architecture.
+#
 
-# Set strict mode for the entire application session
+# Set strict mode for better error handling and PowerShell best practices.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Establish the application's root directory
-$script:ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Get the directory where this script is located to build absolute paths for modules.
+$script:BasePath = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# --- Main Execution Block ---
-try {
-    # 1. PRE-FLIGHT: Load and initialize essential utilities first.
-    # This ensures logging and error handling are available for the entire startup process.
-    Import-Module "$script:ScriptRoot\modules\logger.psm1" -Force
-    Import-Module "$script:ScriptRoot\utilities\error-handling.psm1" -Force
-    Initialize-Logger -Level "Debug"
+# AI: Corrected module load order to include missing components and updated dependency order
+# This incorporates improvements from R2 while maintaining class-based architecture.
+$script:ModulesToLoad = @(
+    # Core infrastructure (no dependencies)
+    @{ Name = "exceptions"; Path = "modules\exceptions.psm1"; Required = $true },
+    @{ Name = "logger"; Path = "modules\logger.psm1"; Required = $true },
+    @{ Name = "event-system"; Path = "modules\event-system.psm1"; Required = $true },
+    @{ Name = "models"; Path = "modules\models.psm1"; Required = $true },
 
-    # 2. LOAD CORE MODULES AND CLASSES
-    Write-Log -Level Info -Message "Loading application modules..." -Component "Startup"
+    # Data and theme (depend on event system and models)
+    @{ Name = "data-manager"; Path = "modules\data-manager.psm1"; Required = $true },
+    @{ Name = "theme-manager"; Path = "modules\theme-manager.psm1"; Required = $true },
+
+    # Framework (depends on event system)
+    @{ Name = "tui-framework"; Path = "modules\tui-framework.psm1"; Required = $true },
+
+    # Engine (depends on theme and framework)
+    @{ Name = "tui-engine-v2"; Path = "modules\tui-engine-v2.psm1"; Required = $true },
+
+    # Dialog system (depends on engine)
+    @{ Name = "dialog-system"; Path = "modules\dialog-system.psm1"; Required = $true },
+
+    # Services (class-based)
+    @{ Name = "keybinding-service"; Path = "services\keybinding-service.psm1"; Required = $true },
+    @{ Name = "navigation-service-class"; Path = "services\navigation-service-class.psm1"; Required = $true },
+
+    # Layout system
+    @{ Name = "panels-class"; Path = "layout\panels-class.psm1"; Required = $true },
+
+    # Focus management (depends on event system)
+    @{ Name = "focus-manager"; Path = "utilities\focus-manager.psm1"; Required = $true },
+
+    # Components (depend on engine and panels)
+    @{ Name = "advanced-input-components"; Path = "components\advanced-input-components.psm1"; Required = $true },
+    @{ Name = "advanced-data-components"; Path = "components\advanced-data-components.psm1"; Required = $true },
+
+    # UI Classes (depend on engine)
+    @{ Name = "ui-classes"; Path = "components\ui-classes.psm1"; Required = $true },
+    @{ Name = "panel-classes"; Path = "components\panel-classes.psm1"; Required = $true },
+    @{ Name = "table-class"; Path = "components\table-class.psm1"; Required = $true },
+    @{ Name = "navigation-class"; Path = "components\navigation-class.psm1"; Required = $true }
+)
+
+# Screen modules will be loaded dynamically by the framework.
+# AI: Updated to match existing screens in CLASSY - only load screens that exist
+$script:ScreenModules = @(
+    "dashboard\dashboard-screen",  # AI: Corrected path for dashboard screen
+    "task-list-screen"              # AI: Keep existing class-based screen
+)
+
+function Initialize-PMCModules {
+    param([bool]$Silent = $false)
     
-    # These modules provide foundational classes and functional systems.
-    # Order is critical for dependencies.
-    Import-Module "$script:ScriptRoot\modules\event-system.psm1" -Force
-    Import-Module "$script:ScriptRoot\models.psm1" -Force # Use the superior models file
-    Import-Module "$script:ScriptRoot\modules\data-manager.psm1" -Force
-    Import-Module "$script:ScriptRoot\modules\theme-manager.psm1" -Force
-    Import-Module "$script:ScriptRoot\modules\tui-engine-v2.psm1" -Force
-    Import-Module "$script:ScriptRoot\modules\tui-framework.psm1" -Force
-    Import-Module "$script:ScriptRoot\modules\dialog-system.psm1" -Force
-    
-    # 3. LOAD SERVICE CLASSES
-    # These define the application's business logic layer.
-    Import-Module "$script:ScriptRoot\services\keybinding-service-class.psm1" -Force
-    Import-Module "$script:ScriptRoot\services\navigation-service-class.psm1" -Force
-    Import-Module "$script:ScriptRoot\services\screen-factory.psm1" -Force
-    
-    # 4. LOAD UI CLASS DEFINITIONS
-    # Base classes for all UI elements.
-    Import-Module "$script:ScriptRoot\components\ui-classes.psm1" -Force
-    Import-Module "$script:ScriptRoot\components\panel-classes.psm1" -Force
-    Import-Module "$script:ScriptRoot\components\table-class.psm1" -Force
+    return Invoke-WithErrorHandling -ScriptBlock {
+        if (-not $Silent) {
+            Write-Host "Verifying console environment..." -ForegroundColor Gray
+        }
+        $minWidth = 80
+        $minHeight = 24
+        if ($Host.UI.RawUI) {
+            if ($Host.UI.RawUI.WindowSize.Width -lt $minWidth -or $Host.UI.RawUI.WindowSize.Height -lt $minHeight) {
+                Write-Host "Console window too small. Please resize to at least $minWidth x $minHeight and restart." -ForegroundColor Yellow
+                Read-Host "Press Enter to exit."
+                throw "Console window too small."
+            }
+        }
 
-    # 5. INITIALIZE CORE SYSTEMS
-    Write-Log -Level Info -Message "Initializing core systems..." -Component "Startup"
-    Initialize-EventSystem
-    Initialize-ThemeManager
-    Initialize-TuiFramework
-    Initialize-DialogSystem
-    
-    # 6. INITIALIZE AND ASSEMBLE SERVICES
-    Write-Log -Level Info -Message "Assembling services..." -Component "Startup"
-    $global:Services = @{}
-    $global:Services.DataManager = [DataManager]::new()
-    $global:Services.KeybindingService = [KeybindingService]::new()
-    $global:Services.Navigation = [NavigationService]::new($global:Services)
-    
-    # Load data after services are ready
-    $global:Services.DataManager.LoadData()
+        $loadedModules = @()
+        $totalModules = $script:ModulesToLoad.Count
+        $currentModule = 0
 
-    # 7. LOAD TUI ENGINE (This must happen before rendering starts)
-    Write-Log -Level Info -Message "Initializing TUI Engine..." -Component "Startup"
-    Initialize-TuiEngine
-
-    # 8. NAVIGATE TO INITIAL SCREEN
-    Write-Log -Level Info -Message "Navigating to initial screen..." -Component "Startup"
-    $initialScreen = $global:Services.Navigation.ScreenFactory.CreateScreen("DashboardScreen")
-    $global:Services.Navigation.PushScreen("DashboardScreen")
-
-    # 9. START THE APPLICATION MAIN LOOP
-    Write-Log -Level Info -Message "Starting TUI main loop." -Component "Startup"
-    Start-TuiLoop -InitialScreen $initialScreen
-
+        foreach ($module in $script:ModulesToLoad) {
+            $currentModule++
+            $modulePath = Join-Path $script:BasePath $module.Path
+            
+            if (-not $Silent) {
+                $percent = [Math]::Round(($currentModule / $totalModules) * 100)
+                Write-Host "`rLoading modules... [$percent%] $($module.Name)" -NoNewline -ForegroundColor Cyan
+            }
+            
+            if (Test-Path $modulePath) {
+                try {
+                    Import-Module $modulePath -Force -Global
+                    $loadedModules += $module.Name
+                } catch {
+                    if ($module.Required) {
+                        Write-Host "`nFATAL: Failed to load required module: $($module.Name)" -ForegroundColor Red
+                        throw "Failed to load required module: $($module.Name). Error: $($_.Exception.Message)"
+                    } else {
+                        if (-not $Silent) { Write-Host "`nSkipping optional module: $($module.Name)" -ForegroundColor Yellow }
+                    }
+                }
+            } else {
+                if ($module.Required) {
+                    throw "Required module file not found: $($module.Name) at $modulePath"
+                }
+            }
+        }
+        
+        if (-not $Silent) { Write-Host "`rModules loaded successfully.                                    " -ForegroundColor Green }
+        return $loadedModules
+    } -Context "Initializing core and utility modules"
 }
-catch {
-    # This is the final safety net for any unhandled exception during startup.
+
+function Initialize-PMCScreens {
+    param([bool]$Silent = $false)
+    
+    return Invoke-WithErrorHandling -ScriptBlock {
+        if (-not $Silent) { Write-Host "Loading screens..." -ForegroundColor Cyan }
+        
+        $loadedScreens = @()
+        foreach ($screenName in $script:ScreenModules) {
+            $screenPath = Join-Path $script:BasePath "screens\$screenName.psm1"
+            if (Test-Path $screenPath) {
+                try {
+                    Import-Module $screenPath -Force -Global
+                    $loadedScreens += $screenName
+                } catch {
+                    Write-Warning "Failed to load screen module '$screenName': $_"
+                }
+            }
+        }
+        
+        if (-not $Silent) { Write-Host "Screens loaded: $($loadedScreens.Count) of $($script:ScreenModules.Count)" -ForegroundColor Green }
+        return $loadedScreens
+    } -Context "Initializing screen modules"
+}
+
+function Start-PMCTerminal {
+    param([bool]$Silent = $false)
+    
+    Invoke-WithErrorHandling -ScriptBlock {
+        Write-Log -Level Info -Message "PMC Terminal v5 'Helios' Class-Based startup initiated."
+        
+        # --- 1. Load Core Modules ---
+        $loadedModules = Initialize-PMCModules -Silent:$Silent
+        Write-Log -Level Info -Message "Core modules loaded: $($loadedModules -join ', ')"
+        
+        # --- 2. Load UI Screens (before services that depend on them) ---
+        # AI: Moved screen loading before service initialization so screen functions are available
+        $loadedScreens = Initialize-PMCScreens -Silent:$Silent
+        Write-Log -Level Info -Message "Screen modules loaded: $($loadedScreens -join ', ')"
+        
+        # --- 3. Initialize Core Systems (in dependency order) ---
+        # AI: The service initialization sequence is now explicit and ordered by dependency.
+        Initialize-EventSystem
+        Initialize-ThemeManager
+        $dataManagerService = Initialize-DataManager
+        Initialize-TuiFramework
+        if (Get-Command Initialize-FocusManager -ErrorAction SilentlyContinue) {
+            Initialize-FocusManager
+        }
+        Initialize-DialogSystem
+        
+        # --- 4. Initialize and Assemble Class-Based Services ---
+        $services = @{
+            DataManager = $dataManagerService
+        }
+        
+        # AI: Create class-based services
+        if (Get-Command Initialize-KeybindingService -ErrorAction SilentlyContinue) {
+            $services.Keybindings = Initialize-KeybindingService -EnableChords $false
+        } else {
+            # Fallback to class-based keybinding service
+            $services.Keybindings = [KeybindingService]::new()
+        }
+        
+        # AI: Initialize class-based navigation service
+        if ([NavigationService]) {
+            $services.Navigation = [NavigationService]::new($services)
+        } else {
+            Write-Log -Level Warning -Message "NavigationService class not available, using fallback initialization"
+            if (Get-Command Initialize-NavigationService -ErrorAction SilentlyContinue) {
+                $services.Navigation = Initialize-NavigationService $services
+            }
+        }
+        
+        $global:Services = $services
+        Write-Log -Level Info -Message "All services initialized and assembled."
+        
+        # --- 5. Register Navigation Routes ---
+        # AI: Routes are now registered automatically in the class constructor
+        Write-Log -Level Info -Message "Navigation routes registered automatically."
+        
+        # --- 6. Initialize TUI Engine and Navigate ---
+        if (-not $Silent) { Write-Host "`nStarting TUI..." -ForegroundColor Green }
+        Clear-Host
+        
+        Initialize-TuiEngine
+        
+        $startPath = if ($args -contains "-start" -and ($args.IndexOf("-start") + 1) -lt $args.Count) {
+            $args[$args.IndexOf("-start") + 1]
+        } else {
+            "/dashboard"
+        }
+        
+        # AI: Check if navigation service has route validation
+        if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue)) {
+            if (-not $services.Navigation.IsValidRoute($startPath)) {
+                Write-Log -Level Warning -Message "Startup path '$startPath' is not valid. Defaulting to /dashboard."
+                $startPath = "/dashboard"
+            }
+            [void]$services.Navigation.GoTo($startPath)
+        } else {
+            # Fallback navigation
+            Write-Log -Level Info -Message "Using fallback navigation to initial screen"
+            if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "PushScreen" -ErrorAction SilentlyContinue)) {
+                $services.Navigation.PushScreen("DashboardScreen")
+            }
+        }
+        
+        # --- 7. Start the Main Loop ---
+        Start-TuiLoop
+        
+        Write-Log -Level Info -Message "PMC Terminal exited gracefully."
+    } -Context "Main startup sequence"
+}
+
+# ===================================================================
+# MAIN EXECUTION BLOCK
+# ===================================================================
+try {
+    # CRITICAL: Pre-load logger and exceptions BEFORE anything else to ensure
+    # error handling and logging are available throughout the entire startup sequence.
+    $loggerModulePath = Join-Path $script:BasePath "modules\logger.psm1"
+    $exceptionsModulePath = Join-Path $script:BasePath "modules\exceptions.psm1"
+    
+    if (-not (Test-Path $exceptionsModulePath)) { throw "CRITICAL: The core exceptions module is missing at '$exceptionsModulePath'." }
+    if (-not (Test-Path $loggerModulePath)) { throw "CRITICAL: The core logger module is missing at '$loggerModulePath'." }
+    
+    Import-Module $exceptionsModulePath -Force -Global
+    Import-Module $loggerModulePath -Force -Global
+
+    # Now that logger is available, initialize it.
+    Initialize-Logger
+    
+    # Start the main application logic, wrapped in top-level error handling.
+    Start-PMCTerminal -Silent:$false
+    
+} catch {
+    # This is our absolute last resort error handler.
     $errorMessage = "A fatal, unhandled exception occurred during application startup: $($_.Exception.Message)"
     Write-Host "`n$errorMessage" -ForegroundColor Red
     Write-Host $_.ScriptStackTrace -ForegroundColor Gray
     
-    # Try to log the final error
+    # Try to log if possible.
     if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
-        Write-Log -Level Critical -Message $errorMessage -Data @{ Exception = $_.Exception; StackTrace = $_.ScriptStackTrace } -Force
+        Write-Log -Level Fatal -Message $errorMessage -Data @{
+            Exception = $_.Exception
+            ScriptStackTrace = $_.ScriptStackTrace
+        } -Force
     }
     
-    Read-Host "`nPress Enter to exit."
+    # Exit with a non-zero code to indicate failure.
     exit 1
 }
 finally {
     # Final cleanup actions
-    Write-Log -Level Info -Message "Application shutting down." -Component "Shutdown"
+    if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
+        Write-Log -Level Info -Message "Application shutting down."
+    }
     
     if ($global:Services -and $global:Services.DataManager) {
         try {
-            $global:Services.DataManager.SaveData()
-            Write-Log -Level Info -Message "Data saved successfully." -Component "Shutdown"
+            if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
+                $global:Services.DataManager.SaveData()
+                if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
+                    Write-Log -Level Info -Message "Data saved successfully."
+                }
+            }
         }
         catch {
             Write-Warning "Failed to save data on exit: $_"
         }
     }
 }
+
+
+####\Clear-ModuleCache.ps1
+# Clear PowerShell Module Cache for PMC Terminal
+Write-Host "Clearing PowerShell module cache..." -ForegroundColor Yellow
+
+# Get all loaded modules from our application
+$modulesToRemove = Get-Module | Where-Object { 
+    $_.Path -like "*\_CLASSY*" -or 
+    $_.Name -in @('models', 'logger', 'exceptions', 'event-system', 'data-manager', 
+                   'theme-manager', 'tui-framework', 'tui-engine-v2', 'dialog-system',
+                   'keybinding-service', 'navigation-service-class', 'panels-class',
+                   'focus-manager', 'advanced-input-components', 'advanced-data-components',
+                   'ui-classes', 'panel-classes', 'table-class', 'navigation-class')
+}
+
+foreach ($module in $modulesToRemove) {
+    Write-Host "Removing module: $($module.Name)" -ForegroundColor Cyan
+    Remove-Module $module -Force -ErrorAction SilentlyContinue
+}
+
+# Clear any compiled assemblies (for our custom exceptions)
+if ('Helios.HeliosException' -as [type]) {
+    Write-Host "Note: Custom exception types are loaded and cannot be unloaded in this session." -ForegroundColor Yellow
+    Write-Host "For a complete refresh, please start a new PowerShell session." -ForegroundColor Yellow
+}
+
+Write-Host "`nModule cache cleared. You can now run the application again." -ForegroundColor Green
+Write-Host "Run: pwsh -file _CLASSY-MAIN.ps1" -ForegroundColor White
+
 
 
 ####\filecopy.ps1

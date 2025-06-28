@@ -3,16 +3,16 @@
 # Main entry screen for the application.
 # ==============================================================================
 
-using namespace System.Collections.Generic
+# Import models for Task and enum types
+using module '..\..\modules\models.psm1'
 
 # Import base classes and components this screen uses
 using module '..\..\components\ui-classes.psm1'
 using module '..\..\components\panel-classes.psm1'
 using module '..\..\components\table-class.psm1'
 
-# Import utilities
-Import-Module "$PSScriptRoot\..\..\utilities\error-handling.psm1" -Force
-Import-Module "$PSScriptRoot\..\..\utilities\event-system.psm1" -Force
+# AI: Import utilities - removed as these are loaded by main app in correct order
+# Note: Invoke-WithErrorHandling is available globally from exceptions module
 
 class DashboardScreen : Screen {
     # --- UI Components ---
@@ -74,7 +74,7 @@ class DashboardScreen : Screen {
 
     hidden [void] UpdateSummary() {
         $total = $this.Tasks.Count
-        $completed = ($this.Tasks | Where-Object { $_.Status -eq 'Completed' }).Count
+        $completed = ($this.Tasks | Where-Object { $_.Status -eq [TaskStatus]::Completed }).Count
         
         $summaryContent = @(
             "Task Summary",

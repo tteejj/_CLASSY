@@ -131,12 +131,15 @@ class PmcTask : ValidationBase {
             $task.Priority = try { [TaskPriority]::$($legacyData.priority) } catch { [TaskPriority]::Medium }
         }
         
-        # AI: PowerShell 5.1 compatible null-coalescing
-        $projectKey = if ($legacyData.project) { $legacyData.project } 
-                      elseif ($legacyData.Category) { $legacyData.Category } 
-                      else { "General" }
-        $task.ProjectKey = $projectKey
-        $task.Category = $projectKey
+        # AI: PowerShell 5.1 compatible null-coalescing - fixed multi-line assignment
+        if ($legacyData.project) {
+            $task.ProjectKey = $legacyData.project
+        } elseif ($legacyData.Category) {
+            $task.ProjectKey = $legacyData.Category
+        } else {
+            $task.ProjectKey = "General"
+        }
+        $task.Category = $task.ProjectKey
         
         if ($legacyData.created_at) { $task.CreatedAt = try { [datetime]::Parse($legacyData.created_at) } catch { [datetime]::Now } }
         if ($legacyData.updated_at) { $task.UpdatedAt = try { [datetime]::Parse($legacyData.updated_at) } catch { [datetime]::Now } }

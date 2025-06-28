@@ -5,10 +5,6 @@
 #     service initialization patterns from the R2 version, adapted for class-based architecture.
 #
 
-# AI: Import models module classes globally to make them available to all dependent modules
-# This must be done BEFORE loading any modules that reference these classes
-using module .\modules\models.psm1
-
 # Set strict mode for better error handling and PowerShell best practices.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -23,7 +19,7 @@ $script:ModulesToLoad = @(
     @{ Name = "exceptions"; Path = "modules\exceptions.psm1"; Required = $true },
     @{ Name = "logger"; Path = "modules\logger.psm1"; Required = $true },
     @{ Name = "event-system"; Path = "modules\event-system.psm1"; Required = $true },
-    # AI: models module is loaded via 'using module' statement at top of file
+    @{ Name = "models"; Path = "modules\models.psm1"; Required = $true },
 
     # Data and theme (depend on event system and models)
     @{ Name = "data-manager"; Path = "modules\data-manager.psm1"; Required = $true },
@@ -40,7 +36,7 @@ $script:ModulesToLoad = @(
 
     # Services (class-based)
     @{ Name = "keybinding-service"; Path = "services\keybinding-service.psm1"; Required = $true },
-    @{ Name = "navigation-service"; Path = "services\navigation-service-class.psm1"; Required = $true },
+    @{ Name = "navigation-service-class"; Path = "services\navigation-service-class.psm1"; Required = $true },
 
     # Layout system
     @{ Name = "panels-class"; Path = "layout\panels-class.psm1"; Required = $true },
@@ -51,7 +47,6 @@ $script:ModulesToLoad = @(
     # Components (depend on engine and panels)
     @{ Name = "advanced-input-components"; Path = "components\advanced-input-components.psm1"; Required = $true },
     @{ Name = "advanced-data-components"; Path = "components\advanced-data-components.psm1"; Required = $true },
-    @{ Name = "tui-components"; Path = "components\tui-components.psm1"; Required = $false },
 
     # UI Classes (depend on engine)
     @{ Name = "ui-classes"; Path = "components\ui-classes.psm1"; Required = $true },
@@ -70,7 +65,7 @@ $script:ScreenModules = @(
 function Initialize-PMCModules {
     param([bool]$Silent = $false)
     
-    return Invoke-WithErrorHandling -Component "ModuleLoader" -ScriptBlock {
+    return Invoke-WithErrorHandling -ScriptBlock {
         if (-not $Silent) {
             Write-Host "Verifying console environment..." -ForegroundColor Gray
         }
@@ -124,7 +119,7 @@ function Initialize-PMCModules {
 function Initialize-PMCScreens {
     param([bool]$Silent = $false)
     
-    return Invoke-WithErrorHandling -Component "ScreenLoader" -ScriptBlock {
+    return Invoke-WithErrorHandling -ScriptBlock {
         if (-not $Silent) { Write-Host "Loading screens..." -ForegroundColor Cyan }
         
         $loadedScreens = @()
@@ -148,7 +143,7 @@ function Initialize-PMCScreens {
 function Start-PMCTerminal {
     param([bool]$Silent = $false)
     
-    Invoke-WithErrorHandling -Component "Main" -ScriptBlock {
+    Invoke-WithErrorHandling -ScriptBlock {
         Write-Log -Level Info -Message "PMC Terminal v5 'Helios' Class-Based startup initiated."
         
         # --- 1. Load Core Modules ---
@@ -213,22 +208,19 @@ function Start-PMCTerminal {
             "/dashboard"
         }
         
-        # AI: Use clean navigation abstraction - no direct access to internals
-        if ($services.Navigation) {
-            # Check if route is valid before navigating
-            if ((Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue) -and 
-                -not $services.Navigation.IsValidRoute($startPath)) {
+        # AI: Check if navigation service has route validation
+        if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue)) {
+            if (-not $services.Navigation.IsValidRoute($startPath)) {
                 Write-Log -Level Warning -Message "Startup path '$startPath' is not valid. Defaulting to /dashboard."
                 $startPath = "/dashboard"
             }
-            
-            # Navigate using the GoTo method - returns boolean indicating success
-            $navigationResult = $services.Navigation.GoTo($startPath)
-            if (-not $navigationResult) {
-                throw "Failed to navigate to initial screen at path: $startPath"
-            }
+            [void]$services.Navigation.GoTo($startPath)
         } else {
-            throw "Navigation service is not available"
+            # Fallback navigation
+            Write-Log -Level Info -Message "Using fallback navigation to initial screen"
+            if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "PushScreen" -ErrorAction SilentlyContinue)) {
+                $services.Navigation.PushScreen("DashboardScreen")
+            }
         }
         
         # --- 7. Start the Main Loop ---
