@@ -36,7 +36,7 @@ $script:ModulesToLoad = @(
 
     # Services (class-based)
     @{ Name = "keybinding-service"; Path = "services\keybinding-service.psm1"; Required = $true },
-    @{ Name = "navigation-service-class"; Path = "services\navigation-service-class.psm1"; Required = $true },
+    @{ Name = "navigation-service"; Path = "services\navigation-service-class.psm1"; Required = $true },
 
     # Layout system
     @{ Name = "panels-class"; Path = "layout\panels-class.psm1"; Required = $true },
@@ -47,8 +47,9 @@ $script:ModulesToLoad = @(
     # Components (depend on engine and panels)
     @{ Name = "advanced-input-components"; Path = "components\advanced-input-components.psm1"; Required = $true },
     @{ Name = "advanced-data-components"; Path = "components\advanced-data-components.psm1"; Required = $true },
+    @{ Name = "tui-components"; Path = "components\tui-components.psm1"; Required = $false },
 
-    # UI Classes (depend on engine)
+    # UI Classes (depend on engine and models) - MUST be loaded in dependency order
     @{ Name = "ui-classes"; Path = "components\ui-classes.psm1"; Required = $true },
     @{ Name = "panel-classes"; Path = "components\panel-classes.psm1"; Required = $true },
     @{ Name = "table-class"; Path = "components\table-class.psm1"; Required = $true },
@@ -65,7 +66,7 @@ $script:ScreenModules = @(
 function Initialize-PMCModules {
     param([bool]$Silent = $false)
     
-    return Invoke-WithErrorHandling -ScriptBlock {
+    return Invoke-WithErrorHandling -Component "ModuleLoader" -ScriptBlock {
         if (-not $Silent) {
             Write-Host "Verifying console environment..." -ForegroundColor Gray
         }
@@ -119,7 +120,7 @@ function Initialize-PMCModules {
 function Initialize-PMCScreens {
     param([bool]$Silent = $false)
     
-    return Invoke-WithErrorHandling -ScriptBlock {
+    return Invoke-WithErrorHandling -Component "ScreenLoader" -ScriptBlock {
         if (-not $Silent) { Write-Host "Loading screens..." -ForegroundColor Cyan }
         
         $loadedScreens = @()
@@ -143,7 +144,7 @@ function Initialize-PMCScreens {
 function Start-PMCTerminal {
     param([bool]$Silent = $false)
     
-    Invoke-WithErrorHandling -ScriptBlock {
+    Invoke-WithErrorHandling -Component "Main" -ScriptBlock {
         Write-Log -Level Info -Message "PMC Terminal v5 'Helios' Class-Based startup initiated."
         
         # --- 1. Load Core Modules ---
@@ -208,19 +209,22 @@ function Start-PMCTerminal {
             "/dashboard"
         }
         
-        # AI: Check if navigation service has route validation
-        if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue)) {
-            if (-not $services.Navigation.IsValidRoute($startPath)) {
+        # AI: Use clean navigation abstraction - no direct access to internals
+        if ($services.Navigation) {
+            # Check if route is valid before navigating
+            if ((Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue) -and 
+                -not $services.Navigation.IsValidRoute($startPath)) {
                 Write-Log -Level Warning -Message "Startup path '$startPath' is not valid. Defaulting to /dashboard."
                 $startPath = "/dashboard"
             }
-            [void]$services.Navigation.GoTo($startPath)
-        } else {
-            # Fallback navigation
-            Write-Log -Level Info -Message "Using fallback navigation to initial screen"
-            if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "PushScreen" -ErrorAction SilentlyContinue)) {
-                $services.Navigation.PushScreen("DashboardScreen")
+            
+            # Navigate using the GoTo method - returns boolean indicating success
+            $navigationResult = $services.Navigation.GoTo($startPath)
+            if (-not $navigationResult) {
+                throw "Failed to navigate to initial screen at path: $startPath"
             }
+        } else {
+            throw "Navigation service is not available"
         }
         
         # --- 7. Start the Main Loop ---
@@ -274,17 +278,20 @@ finally {
         Write-Log -Level Info -Message "Application shutting down."
     }
     
-    if ($global:Services -and $global:Services.DataManager) {
-        try {
-            if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
-                $global:Services.DataManager.SaveData()
-                if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
-                    Write-Log -Level Info -Message "Data saved successfully."
+    # AI: Check if $global:Services exists before trying to access it
+    if (Test-Path Variable:global:Services) {
+        if ($global:Services -and $global:Services.DataManager) {
+            try {
+                if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
+                    $global:Services.DataManager.SaveData()
+                    if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
+                        Write-Log -Level Info -Message "Data saved successfully."
+                    }
                 }
             }
-        }
-        catch {
-            Write-Warning "Failed to save data on exit: $_"
+            catch {
+                Write-Warning "Failed to save data on exit: $_"
+            }
         }
     }
 }

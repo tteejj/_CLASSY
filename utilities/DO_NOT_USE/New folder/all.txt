@@ -2072,6 +2072,1332 @@ class NavigationMenu : Component {
 }
 
 
+####\components\tui-components.psm1
+# TUI Component Library - COMPLIANT VERSION
+# Stateful component factories following the canonical architecture
+# LEGACY New-TuiPanel has been REMOVED.
+
+#region Basic Components
+
+function global:New-TuiLabel {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "Label"
+        IsFocusable = $false
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 10 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 1 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Text = if ($null -ne $Props.Text) { $Props.Text } else { "" }
+        ForegroundColor = $Props.ForegroundColor
+        Name = $Props.Name
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $fg = if ($self.ForegroundColor) { $self.ForegroundColor } else { Get-ThemeColor "Primary" }
+                Write-BufferString -X $self.X -Y $self.Y -Text $self.Text -ForegroundColor $fg
+            } catch {
+                Write-Log -Level Error -Message "Label Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                return $false
+            } catch {
+                Write-Log -Level Error -Message "Label HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiButton {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "Button"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 10 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Text = if ($null -ne $Props.Text) { $Props.Text } else { "Button" }
+        Name = $Props.Name
+        
+        # Internal State
+        IsPressed = $false
+        
+        # Event Handlers (from Props)
+        OnClick = $Props.OnClick
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Primary" }
+                $bgColor = if ($self.IsPressed) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Background" }
+                $fgColor = if ($self.IsPressed) { Get-ThemeColor "Background" } else { $borderColor }
+                
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height `
+                    -BorderColor $borderColor -BackgroundColor $bgColor
+                    
+                $textX = $self.X + [Math]::Floor(($self.Width - $self.Text.Length) / 2)
+                Write-BufferString -X $textX -Y ($self.Y + 1) -Text $self.Text `
+                    -ForegroundColor $fgColor -BackgroundColor $bgColor
+            } catch {
+                Write-Log -Level Error -Message "Button Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                if ($Key.Key -in @([ConsoleKey]::Enter, [ConsoleKey]::Spacebar)) {
+                    if ($self.OnClick) {
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnClick" -Context "OnClick" -AdditionalData @{ Component = $self.Name; Key = $Key } -ScriptBlock {
+                            & $self.OnClick
+                        }
+                    }
+                    Request-TuiRefresh
+                    return $true
+                }
+            } catch {
+                Write-Log -Level Error -Message "Button HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiTextBox {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "TextBox"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 20 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Text = if ($null -ne $Props.Text) { $Props.Text } else { "" }
+        Placeholder = if ($null -ne $Props.Placeholder) { $Props.Placeholder } else { "" }
+        MaxLength = if ($null -ne $Props.MaxLength) { $Props.MaxLength } else { 100 }
+        Name = $Props.Name
+        
+        # Internal State
+        CursorPosition = if ($null -ne $Props.CursorPosition) { $Props.CursorPosition } else { 0 }
+        
+        # Event Handlers (from Props)
+        OnChange = $Props.OnChange
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height 3 -BorderColor $borderColor
+                
+                $displayText = if ($self.Text) { $self.Text } else { "" }
+                if ([string]::IsNullOrEmpty($displayText) -and -not $self.IsFocused) { 
+                    $displayText = if ($self.Placeholder) { $self.Placeholder } else { "" }
+                }
+                
+                $maxDisplayLength = $self.Width - 4
+                if ($displayText.Length -gt $maxDisplayLength) {
+                    $displayText = $displayText.Substring(0, $maxDisplayLength)
+                }
+                
+                Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $displayText
+                
+                if ($self.IsFocused -and $self.CursorPosition -le $displayText.Length) {
+                    $cursorX = $self.X + 2 + $self.CursorPosition
+                    Write-BufferString -X $cursorX -Y ($self.Y + 1) -Text "_" `
+                        -BackgroundColor (Get-ThemeColor "Accent")
+                }
+            } catch {
+                Write-Log -Level Error -Message "TextBox Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $text = if ($self.Text) { $self.Text } else { "" }
+                $cursorPos = if ($null -ne $self.CursorPosition) { $self.CursorPosition } else { 0 }
+                $oldText = $text
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::Backspace) { 
+                        if ($cursorPos -gt 0) { 
+                            $text = $text.Remove($cursorPos - 1, 1)
+                            $cursorPos-- 
+                        }
+                    }
+                    ([ConsoleKey]::Delete) { 
+                        if ($cursorPos -lt $text.Length) { 
+                            $text = $text.Remove($cursorPos, 1) 
+                        }
+                    }
+                    ([ConsoleKey]::LeftArrow) { 
+                        if ($cursorPos -gt 0) { $cursorPos-- }
+                    }
+                    ([ConsoleKey]::RightArrow) { 
+                        if ($cursorPos -lt $text.Length) { $cursorPos++ }
+                    }
+                    ([ConsoleKey]::Home) { $cursorPos = 0 }
+                    ([ConsoleKey]::End) { $cursorPos = $text.Length }
+                    ([ConsoleKey]::V) {
+                        # Handle Ctrl+V (paste)
+                        if ($Key.Modifiers -band [ConsoleModifiers]::Control) {
+                            try {
+                                # Get clipboard text (Windows only)
+                                $clipboardText = if (Get-Command Get-Clipboard -ErrorAction SilentlyContinue) {
+                                    Get-Clipboard -Format Text -ErrorAction SilentlyContinue
+                                } else {
+                                    $null
+                                }
+                                
+                                if ($clipboardText) {
+                                    # Remove newlines for single-line textbox
+                                    $clipboardText = $clipboardText -replace '[\r\n]+', ' '
+                                    
+                                    # Insert as much as will fit
+                                    $remainingSpace = $self.MaxLength - $text.Length
+                                    if ($remainingSpace -gt 0) {
+                                        $toInsert = if ($clipboardText.Length -gt $remainingSpace) {
+                                            $clipboardText.Substring(0, $remainingSpace)
+                                        } else {
+                                            $clipboardText
+                                        }
+                                        
+                                        $text = $text.Insert($cursorPos, $toInsert)
+                                        $cursorPos += $toInsert.Length
+                                    }
+                                }
+                            } catch {
+                                # Silently ignore clipboard errors
+                                Write-Log -Level Warning -Message "TextBox clipboard paste error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+                            }
+                        } else {
+                            # Regular 'V' key
+                            if (-not [char]::IsControl($Key.KeyChar) -and $text.Length -lt $self.MaxLength) {
+                                $text = $text.Insert($cursorPos, $Key.KeyChar)
+                                $cursorPos++
+                            } else {
+                                return $false
+                            }
+                        }
+                    }
+                    default {
+                        if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar) -and $text.Length -lt $self.MaxLength) {
+                            $text = $text.Insert($cursorPos, $Key.KeyChar)
+                            $cursorPos++
+                        } else { 
+                            return $false 
+                        }
+                    }
+                }
+                
+                if ($text -ne $oldText -or $cursorPos -ne $self.CursorPosition) {
+                    $self.Text = $text
+                    $self.CursorPosition = $cursorPos
+                    
+                    if ($self.OnChange) { 
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -Context "OnChange" -AdditionalData @{ Component = $self.Name; NewValue = $text } -ScriptBlock {
+                            & $self.OnChange -NewValue $text
+                        }
+                    }
+                    Request-TuiRefresh
+                }
+                return $true
+            } catch {
+                Write-Log -Level Error -Message "TextBox HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiCheckBox {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "CheckBox"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 20 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 1 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Text = if ($null -ne $Props.Text) { $Props.Text } else { "Checkbox" }
+        Checked = if ($null -ne $Props.Checked) { $Props.Checked } else { $false }
+        Name = $Props.Name
+        
+        # Event Handlers (from Props)
+        OnChange = $Props.OnChange
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $fg = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Primary" }
+                $checkbox = if ($self.Checked) { "[X]" } else { "[ ]" }
+                Write-BufferString -X $self.X -Y $self.Y -Text "$checkbox $($self.Text)" -ForegroundColor $fg
+            } catch {
+                Write-Log -Level Error -Message "CheckBox Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                if ($Key.Key -in @([ConsoleKey]::Enter, [ConsoleKey]::Spacebar)) {
+                    $self.Checked = -not $self.Checked
+                    
+                    if ($self.OnChange) { 
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -Context "OnChange" -AdditionalData @{ Component = $self.Name; NewValue = $self.Checked } -ScriptBlock {
+                            & $self.OnChange -NewValue $self.Checked 
+                        }
+                    }
+                    Request-TuiRefresh
+                    return $true
+                }
+            } catch {
+                Write-Log -Level Error -Message "CheckBox HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiDropdown {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "Dropdown"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 20 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 10 }
+        Options = if ($null -ne $Props.Options) { $Props.Options } else { @() }
+        Value = $Props.Value
+        Placeholder = if ($null -ne $Props.Placeholder) { $Props.Placeholder } else { "Select..." }
+        Name = $Props.Name
+        
+        # Internal State
+        IsOpen = $false
+        SelectedIndex = 0
+        
+        # Event Handlers (from Props)
+        OnChange = $Props.OnChange
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height 3 -BorderColor $borderColor
+                
+                $displayText = $self.Placeholder
+                if ($self.Value -and $self.Options) {
+                    $selected = $self.Options | Where-Object { $_.Value -eq $self.Value } | Select-Object -First 1
+                    if ($selected) { $displayText = $selected.Display }
+                }
+                
+                Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $displayText
+                $indicator = if ($self.IsOpen) { "▲" } else { "▼" }
+                Write-BufferString -X ($self.X + $self.Width - 3) -Y ($self.Y + 1) -Text $indicator
+                
+                if ($self.IsOpen -and $self.Options.Count -gt 0) {
+                    $listHeight = [Math]::Min($self.Options.Count + 2, 8)
+                    Write-BufferBox -X $self.X -Y ($self.Y + 3) -Width $self.Width -Height $listHeight `
+                        -BorderColor $borderColor -BackgroundColor (Get-ThemeColor "Background")
+                    
+                    $displayCount = [Math]::Min($self.Options.Count, 6)
+                    for ($i = 0; $i -lt $displayCount; $i++) {
+                        $option = $self.Options[$i]
+                        $y = $self.Y + 4 + $i
+                        $fg = if ($i -eq $self.SelectedIndex) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Primary" }
+                        $bg = if ($i -eq $self.SelectedIndex) { Get-ThemeColor "Secondary" } else { Get-ThemeColor "Background" }
+                        $text = $option.Display
+                        if ($text.Length -gt ($self.Width - 4)) { 
+                            $text = $text.Substring(0, $self.Width - 7) + "..." 
+                        }
+                        Write-BufferString -X ($self.X + 2) -Y $y -Text $text -ForegroundColor $fg -BackgroundColor $bg
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "Dropdown Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                if (-not $self.IsOpen) {
+                    if ($Key.Key -in @([ConsoleKey]::Enter, [ConsoleKey]::Spacebar, [ConsoleKey]::DownArrow)) {
+                        $self.IsOpen = $true
+                        Request-TuiRefresh
+                        return $true
+                    }
+                } else {
+                    switch ($Key.Key) {
+                        ([ConsoleKey]::UpArrow) { 
+                            if ($self.SelectedIndex -gt 0) { 
+                                $self.SelectedIndex--
+                                Request-TuiRefresh 
+                            }
+                            return $true 
+                        }
+                        ([ConsoleKey]::DownArrow) { 
+                            if ($self.SelectedIndex -lt ($self.Options.Count - 1)) { 
+                                $self.SelectedIndex++
+                                Request-TuiRefresh 
+                            }
+                            return $true 
+                        }
+                        ([ConsoleKey]::Enter) {
+                            if ($self.Options.Count -gt 0) {
+                                $selected = $self.Options[$self.SelectedIndex]
+                                $self.Value = $selected.Value
+                                
+                                if ($self.OnChange) { 
+                                    Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -Context "OnChange" -AdditionalData @{ Component = $self.Name; NewValue = $selected.Value } -ScriptBlock {
+                                        & $self.OnChange -NewValue $selected.Value 
+                                    }
+                                }
+                            }
+                            $self.IsOpen = $false
+                            Request-TuiRefresh
+                            return $true
+                        }
+                        ([ConsoleKey]::Escape) { 
+                            $self.IsOpen = $false
+                            Request-TuiRefresh
+                            return $true 
+                        }
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "Dropdown HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $false
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiProgressBar {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "ProgressBar"
+        IsFocusable = $false
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 20 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 1 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Value = if ($null -ne $Props.Value) { $Props.Value } else { 0 }
+        Max = if ($null -ne $Props.Max) { $Props.Max } else { 100 }
+        ShowPercent = if ($null -ne $Props.ShowPercent) { $Props.ShowPercent } else { $false }
+        Name = $Props.Name
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $percent = [Math]::Min(100, [Math]::Max(0, ($self.Value / $self.Max) * 100))
+                $filled = [Math]::Floor(($self.Width - 2) * ($percent / 100))
+                $empty = ($self.Width - 2) - $filled
+                
+                $bar = "█" * $filled + "░" * $empty
+                Write-BufferString -X $self.X -Y $self.Y -Text "[$bar]" -ForegroundColor (Get-ThemeColor "Accent")
+                
+                if ($self.ShowPercent) {
+                    $percentText = "$([Math]::Round($percent))%"
+                    $textX = $self.X + [Math]::Floor(($self.Width - $percentText.Length) / 2)
+                    Write-BufferString -X $textX -Y $self.Y -Text $percentText -ForegroundColor (Get-ThemeColor "Primary")
+                }
+            } catch {
+                Write-Log -Level Error -Message "ProgressBar Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                return $false
+            } catch {
+                Write-Log -Level Error -Message "ProgressBar HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiTextArea {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "TextArea"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 40 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 6 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Text = if ($null -ne $Props.Text) { $Props.Text } else { "" }
+        Placeholder = if ($null -ne $Props.Placeholder) { $Props.Placeholder } else { "Enter text..." }
+        WrapText = if ($null -ne $Props.WrapText) { $Props.WrapText } else { $true }
+        Name = $Props.Name
+        
+        # Internal State
+        Lines = @()
+        CursorX = 0
+        CursorY = 0
+        ScrollOffset = 0
+        
+        # Event Handlers (from Props)
+        OnChange = $Props.OnChange
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height -BorderColor $borderColor
+                
+                $innerWidth = $self.Width - 4
+                $innerHeight = $self.Height - 2
+                $displayLines = @()
+                if ($self.Lines.Count -eq 0) { $self.Lines = @("") }
+                
+                foreach ($line in $self.Lines) {
+                    if ($self.WrapText -and $line.Length -gt $innerWidth) {
+                        for ($i = 0; $i -lt $line.Length; $i += $innerWidth) {
+                            $displayLines += $line.Substring($i, [Math]::Min($innerWidth, $line.Length - $i))
+                        }
+                    } else { 
+                        $displayLines += $line 
+                    }
+                }
+                
+                if ($displayLines.Count -eq 1 -and $displayLines[0] -eq "" -and -not $self.IsFocused) {
+                    Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $self.Placeholder
+                    return
+                }
+                
+                $startLine = $self.ScrollOffset
+                $endLine = [Math]::Min($displayLines.Count - 1, $startLine + $innerHeight - 1)
+                
+                for ($i = $startLine; $i -le $endLine; $i++) {
+                    $y = $self.Y + 1 + ($i - $startLine)
+                    $line = $displayLines[$i]
+                    Write-BufferString -X ($self.X + 2) -Y $y -Text $line
+                }
+                
+                if ($self.IsFocused -and $self.CursorY -ge $startLine -and $self.CursorY -le $endLine) {
+                    $cursorScreenY = $self.Y + 1 + ($self.CursorY - $startLine)
+                    $cursorX = [Math]::Min($self.CursorX, $displayLines[$self.CursorY].Length)
+                    Write-BufferString -X ($self.X + 2 + $cursorX) -Y $cursorScreenY -Text "_" `
+                        -BackgroundColor (Get-ThemeColor "Accent")
+                }
+                
+                if ($displayLines.Count -gt $innerHeight) {
+                    $scrollbarHeight = $innerHeight
+                    $scrollPosition = [Math]::Floor(($self.ScrollOffset / ($displayLines.Count - $innerHeight)) * ($scrollbarHeight - 1))
+                    for ($i = 0; $i -lt $scrollbarHeight; $i++) {
+                        $char = if ($i -eq $scrollPosition) { "█" } else { "│" }
+                        $color = if ($i -eq $scrollPosition) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Subtle" }
+                        Write-BufferString -X ($self.X + $self.Width - 2) -Y ($self.Y + 1 + $i) -Text $char -ForegroundColor $color
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "TextArea Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $lines = $self.Lines
+                $cursorY = $self.CursorY
+                $cursorX = $self.CursorX
+                $innerHeight = $self.Height - 2
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::UpArrow) {
+                        if ($cursorY -gt 0) {
+                            $cursorY--
+                            $cursorX = [Math]::Min($cursorX, $lines[$cursorY].Length)
+                            if ($cursorY -lt $self.ScrollOffset) { 
+                                $self.ScrollOffset = $cursorY 
+                            }
+                        }
+                    }
+                    ([ConsoleKey]::DownArrow) {
+                        if ($cursorY -lt $lines.Count - 1) {
+                            $cursorY++
+                            $cursorX = [Math]::Min($cursorX, $lines[$cursorY].Length)
+                            if ($cursorY -ge $self.ScrollOffset + $innerHeight) { 
+                                $self.ScrollOffset = $cursorY - $innerHeight + 1 
+                            }
+                        }
+                    }
+                    ([ConsoleKey]::LeftArrow) {
+                        if ($cursorX -gt 0) { 
+                            $cursorX-- 
+                        } elseif ($cursorY -gt 0) { 
+                            $cursorY--
+                            $cursorX = $lines[$cursorY].Length 
+                        }
+                    }
+                    ([ConsoleKey]::RightArrow) {
+                        if ($cursorX -lt $lines[$cursorY].Length) { 
+                            $cursorX++ 
+                        } elseif ($cursorY -lt $lines.Count - 1) { 
+                            $cursorY++
+                            $cursorX = 0 
+                        }
+                    }
+                    ([ConsoleKey]::Home) { $cursorX = 0 }
+                    ([ConsoleKey]::End) { $cursorX = $lines[$cursorY].Length }
+                    ([ConsoleKey]::Enter) {
+                        $currentLine = $lines[$cursorY]
+                        $beforeCursor = $currentLine.Substring(0, $cursorX)
+                        $afterCursor = $currentLine.Substring($cursorX)
+                        $lines[$cursorY] = $beforeCursor
+                        $lines = @($lines[0..$cursorY]) + @($afterCursor) + @($lines[($cursorY + 1)..($lines.Count - 1)])
+                        $cursorY++
+                        $cursorX = 0
+                        if ($cursorY -ge $self.ScrollOffset + $innerHeight) { 
+                            $self.ScrollOffset = $cursorY - $innerHeight + 1 
+                        }
+                    }
+                    ([ConsoleKey]::Backspace) {
+                        if ($cursorX -gt 0) { 
+                            $lines[$cursorY] = $lines[$cursorY].Remove($cursorX - 1, 1)
+                            $cursorX-- 
+                        } elseif ($cursorY -gt 0) {
+                            $prevLineLength = $lines[$cursorY - 1].Length
+                            $lines[$cursorY - 1] += $lines[$cursorY]
+                            $newLines = @()
+                            for ($i = 0; $i -lt $lines.Count; $i++) { 
+                                if ($i -ne $cursorY) { $newLines += $lines[$i] } 
+                            }
+                            $lines = $newLines
+                            $cursorY--
+                            $cursorX = $prevLineLength
+                        }
+                    }
+                    ([ConsoleKey]::Delete) {
+                        if ($cursorX -lt $lines[$cursorY].Length) { 
+                            $lines[$cursorY] = $lines[$cursorY].Remove($cursorX, 1) 
+                        } elseif ($cursorY -lt $lines.Count - 1) {
+                            $lines[$cursorY] += $lines[$cursorY + 1]
+                            $newLines = @()
+                            for ($i = 0; $i -lt $lines.Count; $i++) { 
+                                if ($i -ne ($cursorY + 1)) { $newLines += $lines[$i] } 
+                            }
+                            $lines = $newLines
+                        }
+                    }
+                    ([ConsoleKey]::V) {
+                        # Handle Ctrl+V (paste)
+                        if ($Key.Modifiers -band [ConsoleModifiers]::Control) {
+                            try {
+                                # Get clipboard text (Windows only)
+                                $clipboardText = if (Get-Command Get-Clipboard -ErrorAction SilentlyContinue) {
+                                    Get-Clipboard -Format Text -ErrorAction SilentlyContinue
+                                } else {
+                                    $null
+                                }
+                                
+                                if ($clipboardText) {
+                                    # Split clipboard text into lines
+                                    $clipboardLines = $clipboardText -split '[\r\n]+'
+                                    
+                                    if ($clipboardLines.Count -eq 1) {
+                                        # Single line paste - insert at cursor
+                                        $lines[$cursorY] = $lines[$cursorY].Insert($cursorX, $clipboardLines[0])
+                                        $cursorX += $clipboardLines[0].Length
+                                    } else {
+                                        # Multi-line paste
+                                        $currentLine = $lines[$cursorY]
+                                        $beforeCursor = $currentLine.Substring(0, $cursorX)
+                                        $afterCursor = $currentLine.Substring($cursorX)
+                                        
+                                        # First line
+                                        $lines[$cursorY] = $beforeCursor + $clipboardLines[0]
+                                        
+                                        # Insert middle lines
+                                        $insertLines = @()
+                                        for ($i = 1; $i -lt $clipboardLines.Count - 1; $i++) {
+                                            $insertLines += $clipboardLines[$i]
+                                        }
+                                        
+                                        # Last line
+                                        $lastLine = $clipboardLines[-1] + $afterCursor
+                                        $insertLines += $lastLine
+                                        
+                                        # Insert all new lines
+                                        $newLines = @()
+                                        for ($i = 0; $i -le $cursorY; $i++) {
+                                            $newLines += $lines[$i]
+                                        }
+                                        $newLines += $insertLines
+                                        for ($i = $cursorY + 1; $i -lt $lines.Count; $i++) {
+                                            $newLines += $lines[$i]
+                                        }
+                                        
+                                        $lines = $newLines
+                                        $cursorY += $clipboardLines.Count - 1
+                                        $cursorX = $clipboardLines[-1].Length
+                                    }
+                                    
+                                    # Adjust scroll if needed
+                                    $innerHeight = $self.Height - 2
+                                    if ($cursorY -ge $self.ScrollOffset + $innerHeight) { 
+                                        $self.ScrollOffset = $cursorY - $innerHeight + 1 
+                                    }
+                                }
+                            } catch {
+                                # Silently ignore clipboard errors
+                                Write-Log -Level Warning -Message "TextArea clipboard paste error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+                            }
+                        } else {
+                            # Regular 'V' key
+                            if (-not [char]::IsControl($Key.KeyChar)) {
+                                $lines[$cursorY] = $lines[$cursorY].Insert($cursorX, $Key.KeyChar)
+                                $cursorX++
+                            } else {
+                                return $false
+                            }
+                        }
+                    }
+                    default {
+                        if ($Key.KeyChar -and -not [char]::IsControl($Key.KeyChar)) {
+                            $lines[$cursorY] = $lines[$cursorY].Insert($cursorX, $Key.KeyChar)
+                            $cursorX++
+                        } else { 
+                            return $false 
+                        }
+                    }
+                }
+                
+                $self.Lines = $lines
+                $self.CursorX = $cursorX
+                $self.CursorY = $cursorY
+                $self.Text = $lines -join "`n"
+                
+                if ($self.OnChange) { 
+                    Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -Context "OnChange" -AdditionalData @{ Component = $self.Name; NewValue = $self.Text } -ScriptBlock {
+                        & $self.OnChange -NewValue $self.Text 
+                    }
+                }
+                Request-TuiRefresh
+                return $true
+            } catch {
+                Write-Log -Level Error -Message "TextArea HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # AI: Initialize Lines array from Text property (PowerShell 5.1 compatible)
+    if ($null -ne $Props.Text -and $Props.Text -ne "") {
+        $component.Lines = $Props.Text -split "`n"
+    } else {
+        $component.Lines = @("")
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+#endregion
+
+#region DateTime Components
+
+function global:New-TuiDatePicker {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "DatePicker"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 20 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Value = if ($null -ne $Props.Value) { $Props.Value } else { (Get-Date) }
+        Format = if ($null -ne $Props.Format) { $Props.Format } else { "yyyy-MM-dd" }
+        Name = $Props.Name
+        
+        # Event Handlers (from Props)
+        OnChange = $Props.OnChange
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height 3 -BorderColor $borderColor
+                $dateStr = $self.Value.ToString($self.Format)
+                
+                # Truncate date string if too long
+                $maxLength = $self.Width - 6
+                if ($dateStr.Length -gt $maxLength) {
+                    $dateStr = $dateStr.Substring(0, $maxLength)
+                }
+                
+                Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $dateStr
+                if ($self.IsFocused -and $self.Width -ge 6) { 
+                    Write-BufferString -X ($self.X + $self.Width - 4) -Y ($self.Y + 1) -Text "📅" -ForegroundColor $borderColor 
+                }
+            } catch {
+                Write-Log -Level Error -Message "DatePicker Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $date = $self.Value
+                $handled = $true
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::UpArrow)   { $date = $date.AddDays(1) }
+                    ([ConsoleKey]::DownArrow) { $date = $date.AddDays(-1) }
+                    ([ConsoleKey]::PageUp)    { $date = $date.AddMonths(1) }
+                    ([ConsoleKey]::PageDown)  { $date = $date.AddMonths(-1) }
+                    ([ConsoleKey]::Home)      { $date = Get-Date }
+                    ([ConsoleKey]::T) { 
+                        if ($Key.Modifiers -band [ConsoleModifiers]::Control) { 
+                            $date = Get-Date 
+                        } else { 
+                            $handled = $false 
+                        } 
+                    }
+                    default { $handled = $false }
+                }
+                
+                if ($handled) {
+                    $self.Value = $date
+                    if ($self.OnChange) { 
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -Context "OnChange" -AdditionalData @{ Component = $self.Name; NewValue = $date } -ScriptBlock {
+                            & $self.OnChange -NewValue $date 
+                        }
+                    }
+                    Request-TuiRefresh
+                }
+                return $handled
+            } catch {
+                Write-Log -Level Error -Message "DatePicker HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiTimePicker {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "TimePicker"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 15 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 3 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Hour = if ($null -ne $Props.Hour) { $Props.Hour } else { 0 }
+        Minute = if ($null -ne $Props.Minute) { $Props.Minute } else { 0 }
+        Format24H = if ($null -ne $Props.Format24H) { $Props.Format24H } else { $true }
+        Name = $Props.Name
+        
+        # Event Handlers (from Props)
+        OnChange = $Props.OnChange
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height 3 -BorderColor $borderColor
+                
+                if ($self.Format24H) { 
+                    $timeStr = "{0:D2}:{1:D2}" -f $self.Hour, $self.Minute 
+                } else {
+                    $displayHour = if ($self.Hour -eq 0) { 12 } elseif ($self.Hour -gt 12) { $self.Hour - 12 } else { $self.Hour }
+                    $ampm = if ($self.Hour -lt 12) { "AM" } else { "PM" }
+                    $timeStr = "{0:D2}:{1:D2} {2}" -f $displayHour, $self.Minute, $ampm
+                }
+                
+                # Truncate time string if too long
+                $maxLength = $self.Width - 6
+                if ($timeStr.Length -gt $maxLength) {
+                    $timeStr = $timeStr.Substring(0, $maxLength)
+                }
+                
+                Write-BufferString -X ($self.X + 2) -Y ($self.Y + 1) -Text $timeStr
+                if ($self.IsFocused -and $self.Width -ge 6) { 
+                    Write-BufferString -X ($self.X + $self.Width - 4) -Y ($self.Y + 1) -Text "⏰" -ForegroundColor $borderColor 
+                }
+            } catch {
+                Write-Log -Level Error -Message "TimePicker Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                $handled = $true
+                $hour = $self.Hour
+                $minute = $self.Minute
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::UpArrow) { 
+                        $minute = ($minute + 15) % 60
+                        if ($minute -eq 0) { $hour = ($hour + 1) % 24 } 
+                    }
+                    ([ConsoleKey]::DownArrow) { 
+                        $minute = ($minute - 15 + 60) % 60
+                        if ($minute -eq 45) { $hour = ($hour - 1 + 24) % 24 } 
+                    }
+                    ([ConsoleKey]::LeftArrow)  { $hour = ($hour - 1 + 24) % 24 }
+                    ([ConsoleKey]::RightArrow) { $hour = ($hour + 1) % 24 }
+                    default { $handled = $false }
+                }
+                
+                if ($handled) {
+                    $self.Hour = $hour
+                    $self.Minute = $minute
+                    
+                    if ($self.OnChange) { 
+                        Invoke-WithErrorHandling -Component "$($self.Name).OnChange" -Context "OnChange" -AdditionalData @{ Component = $self.Name; NewHour = $hour; NewMinute = $minute } -ScriptBlock {
+                            & $self.OnChange -NewHour $hour -NewMinute $minute 
+                        }
+                    }
+                    Request-TuiRefresh
+                }
+                return $handled
+            } catch {
+                Write-Log -Level Error -Message "TimePicker HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+#endregion
+
+#region Data Display Components
+
+function global:New-TuiTable {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "Table"
+        IsFocusable = $true
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 60 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 15 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        Columns = if ($null -ne $Props.Columns) { $Props.Columns } else { @() }
+        Rows = if ($null -ne $Props.Rows) { $Props.Rows } else { @() }
+        Name = $Props.Name
+        
+        # Internal State
+        SelectedRow = 0
+        ScrollOffset = 0
+        SortColumn = $null
+        SortAscending = $true
+        
+        # Event Handlers (from Props)
+        OnRowSelect = $Props.OnRowSelect
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible -or $self.Columns.Count -eq 0) { return }
+                
+                $borderColor = if ($self.IsFocused) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Secondary" }
+                Write-BufferBox -X $self.X -Y $self.Y -Width $self.Width -Height $self.Height -BorderColor $borderColor
+                
+                $totalWidth = $self.Width - 4
+                $colWidth = [Math]::Floor($totalWidth / $self.Columns.Count)
+                $headerY = $self.Y + 1
+                $currentX = $self.X + 2
+                
+                # Draw headers
+                foreach ($col in $self.Columns) {
+                    $header = $col.Header
+                    if ($col.Name -eq $self.SortColumn) { 
+                        $arrow = if ($self.SortAscending) { "▲" } else { "▼" }
+                        $header = "$header $arrow" 
+                    }
+                    if ($header.Length -gt $colWidth - 1) { 
+                        $header = $header.Substring(0, $colWidth - 4) + "..." 
+                    }
+                    Write-BufferString -X $currentX -Y $headerY -Text $header -ForegroundColor (Get-ThemeColor "Header")
+                    $currentX += $colWidth
+                }
+                
+                # Header separator
+                Write-BufferString -X ($self.X + 1) -Y ($headerY + 1) -Text ("─" * ($self.Width - 2)) -ForegroundColor $borderColor
+                
+                # Draw rows
+                $visibleRows = $self.Height - 5
+                $startIdx = $self.ScrollOffset
+                $endIdx = [Math]::Min($self.Rows.Count - 1, $startIdx + $visibleRows - 1)
+                
+                for ($i = $startIdx; $i -le $endIdx; $i++) {
+                    $row = $self.Rows[$i]
+                    $rowY = ($headerY + 2) + ($i - $startIdx)
+                    $currentX = $self.X + 2
+                    $isSelected = ($i -eq $self.SelectedRow -and $self.IsFocused)
+                    $bgColor = if ($isSelected) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Background" }
+                    $fgColor = if ($isSelected) { Get-ThemeColor "Background" } else { Get-ThemeColor "Primary" }
+                    
+                    if ($isSelected) { 
+                        Write-BufferString -X ($self.X + 1) -Y $rowY -Text (" " * ($self.Width - 2)) -BackgroundColor $bgColor 
+                    }
+                    
+                    foreach ($col in $self.Columns) {
+                        $value = $row.($col.Name)
+                        if ($null -eq $value) { $value = "" }
+                        $text = $value.ToString()
+                        if ($text.Length -gt $colWidth - 1) { 
+                            $text = $text.Substring(0, $colWidth - 4) + "..." 
+                        }
+                        Write-BufferString -X $currentX -Y $rowY -Text $text -ForegroundColor $fgColor -BackgroundColor $bgColor
+                        $currentX += $colWidth
+                    }
+                }
+                
+                # Scrollbar
+                if ($self.Rows.Count -gt $visibleRows) {
+                    $scrollbarHeight = $visibleRows
+                    $scrollPosition = [Math]::Floor(($self.ScrollOffset / ($self.Rows.Count - $visibleRows)) * ($scrollbarHeight - 1))
+                    for ($i = 0; $i -lt $scrollbarHeight; $i++) {
+                        $char = if ($i -eq $scrollPosition) { "█" } else { "│" }
+                        $color = if ($i -eq $scrollPosition) { Get-ThemeColor "Accent" } else { Get-ThemeColor "Subtle" }
+                        Write-BufferString -X ($self.X + $self.Width - 2) -Y ($headerY + 2 + $i) -Text $char -ForegroundColor $color
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "Table Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                if ($self.Rows.Count -eq 0) { return $false }
+                
+                $visibleRows = $self.Height - 5
+                $handled = $true
+                
+                switch ($Key.Key) {
+                    ([ConsoleKey]::UpArrow) { 
+                        if ($self.SelectedRow -gt 0) { 
+                            $self.SelectedRow--
+                            if ($self.SelectedRow -lt $self.ScrollOffset) { 
+                                $self.ScrollOffset = $self.SelectedRow 
+                            }
+                            Request-TuiRefresh 
+                        } 
+                    }
+                    ([ConsoleKey]::DownArrow) { 
+                        if ($self.SelectedRow -lt $self.Rows.Count - 1) { 
+                            $self.SelectedRow++
+                            if ($self.SelectedRow -ge $self.ScrollOffset + $visibleRows) { 
+                                $self.ScrollOffset = $self.SelectedRow - $visibleRows + 1 
+                            }
+                            Request-TuiRefresh 
+                        } 
+                    }
+                    ([ConsoleKey]::PageUp) { 
+                        $self.SelectedRow = [Math]::Max(0, $self.SelectedRow - $visibleRows)
+                        $self.ScrollOffset = [Math]::Max(0, $self.ScrollOffset - $visibleRows)
+                        Request-TuiRefresh 
+                    }
+                    ([ConsoleKey]::PageDown) { 
+                        $self.SelectedRow = [Math]::Min($self.Rows.Count - 1, $self.SelectedRow + $visibleRows)
+                        $maxScroll = [Math]::Max(0, $self.Rows.Count - $visibleRows)
+                        $self.ScrollOffset = [Math]::Min($maxScroll, $self.ScrollOffset + $visibleRows)
+                        Request-TuiRefresh 
+                    }
+                    ([ConsoleKey]::Home) { 
+                        $self.SelectedRow = 0
+                        $self.ScrollOffset = 0
+                        Request-TuiRefresh 
+                    }
+                    ([ConsoleKey]::End) { 
+                        $self.SelectedRow = $self.Rows.Count - 1
+                        $self.ScrollOffset = [Math]::Max(0, $self.Rows.Count - $visibleRows)
+                        Request-TuiRefresh 
+                    }
+                    ([ConsoleKey]::Enter) { 
+                        if ($self.OnRowSelect) { 
+                            Invoke-WithErrorHandling -Component "$($self.Name).OnRowSelect" -Context "OnRowSelect" -AdditionalData @{ Component = $self.Name; SelectedRow = $self.SelectedRow } -ScriptBlock {
+                                & $self.OnRowSelect -Row $self.Rows[$self.SelectedRow] -Index $self.SelectedRow 
+                            }
+                        } 
+                    }
+                    default {
+                        if ($Key.KeyChar -match '\d') {
+                            $colIndex = [int]$Key.KeyChar.ToString() - 1
+                            if ($colIndex -ge 0 -and $colIndex -lt $self.Columns.Count) {
+                                $colName = $self.Columns[$colIndex].Name
+                                if ($self.SortColumn -eq $colName) { 
+                                    $self.SortAscending = -not $self.SortAscending 
+                                } else { 
+                                    $self.SortColumn = $colName
+                                    $self.SortAscending = $true 
+                                }
+                                $self.Rows = $self.Rows | Sort-Object -Property $colName -Descending:(-not $self.SortAscending)
+                                Request-TuiRefresh
+                            }
+                        } else { 
+                            $handled = $false 
+                        }
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "Table HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+            }
+            return $handled
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+function global:New-TuiChart {
+    param([hashtable]$Props = @{})
+    
+    $component = @{
+        # Metadata
+        Type = "Chart"
+        IsFocusable = $false
+        
+        # Properties (from Props)
+        X = if ($null -ne $Props.X) { $Props.X } else { 0 }
+        Y = if ($null -ne $Props.Y) { $Props.Y } else { 0 }
+        Width = if ($null -ne $Props.Width) { $Props.Width } else { 40 }
+        Height = if ($null -ne $Props.Height) { $Props.Height } else { 10 }
+        Visible = if ($null -ne $Props.Visible) { $Props.Visible } else { $true }
+        ZIndex = if ($null -ne $Props.ZIndex) { $Props.ZIndex } else { 0 }
+        ChartType = if ($null -ne $Props.ChartType) { $Props.ChartType } else { "Bar" }
+        Data = if ($null -ne $Props.Data) { $Props.Data } else { @() }
+        ShowValues = if ($null -ne $Props.ShowValues) { $Props.ShowValues } else { $true }
+        Name = $Props.Name
+        
+        # Methods
+        Render = {
+            param($self)
+            try {
+                if (-not $self.Visible -or $self.Data.Count -eq 0) { return }
+                
+                switch ($self.ChartType) {
+                    "Bar" {
+                        $maxValue = ($self.Data | Measure-Object -Property Value -Maximum).Maximum
+                        if ($maxValue -eq 0) { $maxValue = 1 }
+                        $chartHeight = $self.Height - 2
+                        $barWidth = [Math]::Floor(($self.Width - 4) / $self.Data.Count)
+                        
+                        for ($i = 0; $i -lt $self.Data.Count; $i++) {
+                            $item = $self.Data[$i]
+                            $barHeight = [Math]::Floor(($item.Value / $maxValue) * $chartHeight)
+                            $barX = $self.X + 2 + ($i * $barWidth)
+                            
+                            for ($y = 0; $y -lt $barHeight; $y++) { 
+                                $barY = $self.Y + $self.Height - 2 - $y
+                                Write-BufferString -X $barX -Y $barY -Text ("█" * ($barWidth - 1)) -ForegroundColor (Get-ThemeColor "Accent") 
+                            }
+                            
+                            if ($item.Label -and $barWidth -gt 3) { 
+                                $label = $item.Label
+                                if ($label.Length -gt $barWidth - 1) { 
+                                    $label = $label.Substring(0, $barWidth - 2) 
+                                }
+                                Write-BufferString -X $barX -Y ($self.Y + $self.Height - 1) -Text $label -ForegroundColor (Get-ThemeColor "Subtle") 
+                            }
+                            
+                            if ($self.ShowValues -and $barHeight -gt 0) { 
+                                $valueText = $item.Value.ToString()
+                                Write-BufferString -X $barX -Y ($self.Y + $self.Height - 3 - $barHeight) -Text $valueText -ForegroundColor (Get-ThemeColor "Primary") 
+                            }
+                        }
+                    }
+                    "Sparkline" {
+                        $width = $self.Width - 2
+                        $height = $self.Height - 1
+                        $maxValue = ($self.Data | Measure-Object -Maximum).Maximum
+                        if ($maxValue -eq 0) { $maxValue = 1 }
+                        
+                        $sparkChars = @(" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█")
+                        $sparkline = ""
+                        
+                        foreach ($value in $self.Data) { 
+                            $normalized = ($value / $maxValue)
+                            $charIndex = [Math]::Floor($normalized * ($sparkChars.Count - 1))
+                            $sparkline += $sparkChars[$charIndex] 
+                        }
+                        
+                        if ($sparkline.Length -gt $width) { 
+                            $sparkline = $sparkline.Substring($sparkline.Length - $width) 
+                        } else { 
+                            $sparkline = $sparkline.PadLeft($width) 
+                        }
+                        
+                        Write-BufferString -X ($self.X + 1) -Y ($self.Y + [Math]::Floor($height / 2)) -Text $sparkline -ForegroundColor (Get-ThemeColor "Accent")
+                    }
+                }
+            } catch {
+                Write-Log -Level Error -Message "Chart Render error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Exception = $_ }
+            }
+        }
+        
+        HandleInput = {
+            param($self, $Key)
+            try {
+                return $false
+            } catch {
+                Write-Log -Level Error -Message "Chart HandleInput error for '$($self.Name)': $_" -Data @{ Component = $self.Name; Key = $Key; Exception = $_ }
+                return $false
+            }
+        }
+    }
+    
+    # Return as hashtable to allow dynamic property assignment
+    return $component
+}
+
+#endregion
+
+#region Container Components
+
+# FIX: REMOVED the legacy New-TuiPanel function entirely.
+# All code should now use the more specific panels from layout/panels.psm1.
+
+#endregion
+
+Export-ModuleMember -Function @(
+    # Basic Components
+    'New-TuiLabel',
+    'New-TuiButton',
+    'New-TuiTextBox',
+    'New-TuiCheckBox',
+    'New-TuiDropdown',
+    'New-TuiProgressBar',
+    'New-TuiTextArea',
+    # DateTime Components
+    'New-TuiDatePicker',
+    'New-TuiTimePicker',
+    # Data Display Components
+    'New-TuiTable',
+    'New-TuiChart'
+)
+
+
 ####\components\ui-classes.psm1
 # ==============================================================================
 # PMC Terminal v5 - Base UI Class Hierarchy
@@ -2228,13 +3554,18 @@ Export-ModuleMember -Class @('UIElement', 'Component', 'Panel', 'Screen')
 # Implements specialized panel types for the TUI layout system
 # AI: Implements Phase 1.2 of the class migration plan - layout components
 
-# Import base classes
-using module '..\components\ui-classes.psm1'
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# AI: Import dependencies using absolute paths for PowerShell 5.1 compatibility
+# PowerShell 5.1 requires 'using module' statements to be at the top level, not in conditional blocks
+$uiClassesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "components\ui-classes.psm1"
+if (-not (Test-Path $uiClassesPath)) {
+    throw "Required module not found: ui-classes.psm1 at $uiClassesPath"
+}
 
+# Import the base UI classes module
+Import-Module $uiClassesPath -Force -Global
 
 # Import utilities for error handling
 Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
@@ -2530,8 +3861,8 @@ Export-ModuleMember -Function * -Cmdlet * -Variable * -Alias *
 # AI: Refactored from dispatch-based actions to direct function calls
 # AI: Now uses strongly-typed PmcTask and PmcProject classes from models module
 
-# AI-FIX: Removed 'using module' statements to prevent circular dependencies
-# Dependencies are loaded by the main application in proper order
+# AI: Using absolute path for models module to ensure proper loading
+using module $PSScriptRoot\models.psm1
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -3216,6 +4547,40 @@ function Initialize-DataEventHandlers {
         }
         
         Write-Log -Level Debug -Message "Data event handlers initialized"
+    }
+}
+
+#endregion
+
+#region Public Initialization Function
+
+function Initialize-DataManager {
+    <#
+    .SYNOPSIS
+    Initializes the data manager service and returns a DataManager instance
+    
+    .DESCRIPTION
+    This function loads existing data, sets up event handlers, and returns
+    a DataManager service instance for use by the application.
+    #>
+    [CmdletBinding()]
+    param()
+    
+    Invoke-WithErrorHandling -Component "DataManager.Initialize" -Context "Initializing data manager service" -ScriptBlock {
+        Write-Log -Level Info -Message "Initializing DataManager service"
+        
+        # Load existing data
+        Load-UnifiedData
+        
+        # Initialize event handlers
+        Initialize-DataEventHandlers
+        
+        # Create and return DataManager instance
+        $dataManager = [DataManager]::new()
+        
+        Write-Log -Level Info -Message "DataManager service initialized successfully"
+        
+        return $dataManager
     }
 }
 
@@ -5210,12 +6575,15 @@ class PmcTask : ValidationBase {
             $task.Priority = try { [TaskPriority]::$($legacyData.priority) } catch { [TaskPriority]::Medium }
         }
         
-        # AI: PowerShell 5.1 compatible null-coalescing
-        $projectKey = if ($legacyData.project) { $legacyData.project } 
-                      elseif ($legacyData.Category) { $legacyData.Category } 
-                      else { "General" }
-        $task.ProjectKey = $projectKey
-        $task.Category = $projectKey
+        # AI: PowerShell 5.1 compatible null-coalescing - fixed multi-line assignment
+        if ($legacyData.project) {
+            $task.ProjectKey = $legacyData.project
+        } elseif ($legacyData.Category) {
+            $task.ProjectKey = $legacyData.Category
+        } else {
+            $task.ProjectKey = "General"
+        }
+        $task.Category = $task.ProjectKey
         
         if ($legacyData.created_at) { $task.CreatedAt = try { [datetime]::Parse($legacyData.created_at) } catch { [datetime]::Now } }
         if ($legacyData.updated_at) { $task.UpdatedAt = try { [datetime]::Parse($legacyData.updated_at) } catch { [datetime]::Now } }
@@ -7594,16 +8962,16 @@ Export-ModuleMember -Function @(
 # Main entry screen for the application.
 # ==============================================================================
 
-using namespace System.Collections.Generic
+# Import models for Task and enum types
+using module '..\..\modules\models.psm1'
 
 # Import base classes and components this screen uses
 using module '..\..\components\ui-classes.psm1'
 using module '..\..\components\panel-classes.psm1'
 using module '..\..\components\table-class.psm1'
 
-# Import utilities
-Import-Module "$PSScriptRoot\..\..\utilities\error-handling.psm1" -Force
-Import-Module "$PSScriptRoot\..\..\utilities\event-system.psm1" -Force
+# AI: Import utilities - removed as these are loaded by main app in correct order
+# Note: Invoke-WithErrorHandling is available globally from exceptions module
 
 class DashboardScreen : Screen {
     # --- UI Components ---
@@ -7665,7 +9033,7 @@ class DashboardScreen : Screen {
 
     hidden [void] UpdateSummary() {
         $total = $this.Tasks.Count
-        $completed = ($this.Tasks | Where-Object { $_.Status -eq 'Completed' }).Count
+        $completed = ($this.Tasks | Where-Object { $_.Status -eq [TaskStatus]::Completed }).Count
         
         $summaryContent = @(
             "Task Summary",
@@ -7714,16 +9082,16 @@ class DashboardScreen : Screen {
 # Displays and manages tasks.
 # ==============================================================================
 
-using namespace System.Collections.Generic
+# Import models for Task and enum types
+using module '..\modules\models.psm1'
 
 # Import base classes and components
 using module '..\components\ui-classes.psm1'
 using module '..\components\panel-classes.psm1'
 using module '..\components\table-class.psm1'
 
-# Import utilities
-Import-Module "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
-Import-Module "$PSScriptRoot\..\utilities\event-system.psm1" -Force
+# AI: Removed utility imports - these are loaded globally by main application
+# Note: error-handling and event-system functions are available globally
 
 class TaskListScreen : Screen {
     # --- UI Components ---
@@ -7835,10 +9203,10 @@ class TaskListScreen : Screen {
 # AI: Updated with sophisticated keybinding features from R2 version
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = \"Stop\"
+$ErrorActionPreference = "Stop"
 
 # Import utilities
-Import-Module -Name \"$PSScriptRoot\\..\\utilities\\error-handling.psm1\" -Force
+Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
 
 # KeybindingService Class - Manages application-wide key bindings
 class KeybindingService {
@@ -7851,7 +9219,7 @@ class KeybindingService {
         $this.ContextStack = [System.Collections.Generic.List[string]]::new()
         $this.InitializeDefaultBindings()
         
-        Write-Log -Level Info -Message \"KeybindingService initialized\" -Component \"KeybindingService\"
+        Write-Log -Level Info -Message "KeybindingService initialized" -Component "KeybindingService"
     }
     
     KeybindingService([bool]$enableChords) {
@@ -7859,38 +9227,38 @@ class KeybindingService {
         $this.EnableChords = $enableChords
         $this.InitializeDefaultBindings()
         
-        Write-Log -Level Info -Message \"KeybindingService initialized with chords: $enableChords\" -Component \"KeybindingService\"
+        Write-Log -Level Info -Message "KeybindingService initialized with chords: $enableChords" -Component "KeybindingService"
     }
     
     hidden [void] InitializeDefaultBindings() {
         # AI: Standard application keybindings
         $this.KeyMap = @{
-            \"app.exit\" = @{ Key = \"Q\"; Modifiers = @(\"Ctrl\") }
-            \"app.help\" = @{ Key = [System.ConsoleKey]::F1; Modifiers = @() }
-            \"nav.back\" = @{ Key = [System.ConsoleKey]::Escape; Modifiers = @() }
-            \"nav.up\" = @{ Key = [System.ConsoleKey]::UpArrow; Modifiers = @() }
-            \"nav.down\" = @{ Key = [System.ConsoleKey]::DownArrow; Modifiers = @() }
-            \"nav.left\" = @{ Key = [System.ConsoleKey]::LeftArrow; Modifiers = @() }
-            \"nav.right\" = @{ Key = [System.ConsoleKey]::RightArrow; Modifiers = @() }
-            \"nav.select\" = @{ Key = [System.ConsoleKey]::Enter; Modifiers = @() }
-            \"nav.pageup\" = @{ Key = [System.ConsoleKey]::PageUp; Modifiers = @() }
-            \"nav.pagedown\" = @{ Key = [System.ConsoleKey]::PageDown; Modifiers = @() }
-            \"nav.home\" = @{ Key = [System.ConsoleKey]::Home; Modifiers = @() }
-            \"nav.end\" = @{ Key = [System.ConsoleKey]::End; Modifiers = @() }
-            \"nav.tab\" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @() }
-            \"nav.shifttab\" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @(\"Shift\") }
-            \"edit.delete\" = @{ Key = [System.ConsoleKey]::Delete; Modifiers = @() }
-            \"edit.backspace\" = @{ Key = [System.ConsoleKey]::Backspace; Modifiers = @() }
-            \"edit.new\" = @{ Key = \"n\"; Modifiers = @() }
-            \"edit.save\" = @{ Key = \"s\"; Modifiers = @(\"Ctrl\") }
-            \"app.refresh\" = @{ Key = [System.ConsoleKey]::F5; Modifiers = @() }
+            "app.exit" = @{ Key = "Q"; Modifiers = @("Ctrl") }
+            "app.help" = @{ Key = [System.ConsoleKey]::F1; Modifiers = @() }
+            "nav.back" = @{ Key = [System.ConsoleKey]::Escape; Modifiers = @() }
+            "nav.up" = @{ Key = [System.ConsoleKey]::UpArrow; Modifiers = @() }
+            "nav.down" = @{ Key = [System.ConsoleKey]::DownArrow; Modifiers = @() }
+            "nav.left" = @{ Key = [System.ConsoleKey]::LeftArrow; Modifiers = @() }
+            "nav.right" = @{ Key = [System.ConsoleKey]::RightArrow; Modifiers = @() }
+            "nav.select" = @{ Key = [System.ConsoleKey]::Enter; Modifiers = @() }
+            "nav.pageup" = @{ Key = [System.ConsoleKey]::PageUp; Modifiers = @() }
+            "nav.pagedown" = @{ Key = [System.ConsoleKey]::PageDown; Modifiers = @() }
+            "nav.home" = @{ Key = [System.ConsoleKey]::Home; Modifiers = @() }
+            "nav.end" = @{ Key = [System.ConsoleKey]::End; Modifiers = @() }
+            "nav.tab" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @() }
+            "nav.shifttab" = @{ Key = [System.ConsoleKey]::Tab; Modifiers = @("Shift") }
+            "edit.delete" = @{ Key = [System.ConsoleKey]::Delete; Modifiers = @() }
+            "edit.backspace" = @{ Key = [System.ConsoleKey]::Backspace; Modifiers = @() }
+            "edit.new" = @{ Key = "n"; Modifiers = @() }
+            "edit.save" = @{ Key = "s"; Modifiers = @("Ctrl") }
+            "app.refresh" = @{ Key = [System.ConsoleKey]::F5; Modifiers = @() }
         }
     }
     
     [void] SetBinding([string]$actionName, [System.ConsoleKey]$key, [string[]]$modifiers) {
-        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"SetBinding:$actionName\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "SetBinding:$actionName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($actionName)) {
-                throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+                throw [System.ArgumentException]::new("Action name cannot be null or empty", "actionName")
             }
             
             $this.KeyMap[$actionName.ToLower()] = @{
@@ -7898,14 +9266,14 @@ class KeybindingService {
                 Modifiers = if ($modifiers) { @($modifiers) } else { @() }
             }
             
-            Write-Log -Level Debug -Message \"Set keybinding: $actionName -> $key\" -Component \"KeybindingService\"
+            Write-Log -Level Debug -Message "Set keybinding: $actionName -> $key" -Component "KeybindingService"
         }
     }
     
     [void] SetBinding([string]$actionName, [char]$key, [string[]]$modifiers) {
-        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"SetBinding:$actionName\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "SetBinding:$actionName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($actionName)) {
-                throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+                throw [System.ArgumentException]::new("Action name cannot be null or empty", "actionName")
             }
             
             $this.KeyMap[$actionName.ToLower()] = @{
@@ -7913,30 +9281,30 @@ class KeybindingService {
                 Modifiers = if ($modifiers) { @($modifiers) } else { @() }
             }
             
-            Write-Log -Level Debug -Message \"Set keybinding: $actionName -> $key\" -Component \"KeybindingService\"
+            Write-Log -Level Debug -Message "Set keybinding: $actionName -> $key" -Component "KeybindingService"
         }
     }
     
     [void] SetBinding([string]$actionName, [System.ConsoleKeyInfo]$keyInfo) {
         if ([string]::IsNullOrWhiteSpace($actionName)) {
-            throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+            throw [System.ArgumentException]::new("Action name cannot be null or empty", "actionName")
         }
         
         $modifiers = @()
-        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control) { $modifiers += \"Ctrl\" }
-        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) { $modifiers += \"Alt\" }
-        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) { $modifiers += \"Shift\" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Control) { $modifiers += "Ctrl" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) { $modifiers += "Alt" }
+        if ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) { $modifiers += "Shift" }
 
         $this.KeyMap[$actionName.ToLower()] = @{
             Key = $keyInfo.Key
             KeyChar = $keyInfo.KeyChar
             Modifiers = $modifiers
         }
-        Write-Log -Level Debug -Message \"Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))\" -Component \"KeybindingService\"
+        Write-Log -Level Debug -Message "Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))" -Component "KeybindingService"
     }
     
     [void] RemoveBinding([string]$actionName) {
-        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"RemoveBinding:$actionName\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "RemoveBinding:$actionName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($actionName)) {
                 return
             }
@@ -7944,7 +9312,7 @@ class KeybindingService {
             $normalizedName = $actionName.ToLower()
             if ($this.KeyMap.ContainsKey($normalizedName)) {
                 $this.KeyMap.Remove($normalizedName)
-                Write-Log -Level Debug -Message \"Removed keybinding: $actionName\" -Component \"KeybindingService\"
+                Write-Log -Level Debug -Message "Removed keybinding: $actionName" -Component "KeybindingService"
             }
         }
     }
@@ -7954,7 +9322,7 @@ class KeybindingService {
     }
     
     [bool] IsAction([string]$actionName, [System.ConsoleKeyInfo]$keyInfo, [string]$context) {
-        return Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"IsAction:$actionName\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "KeybindingService" -Context "IsAction:$actionName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($actionName)) {
                 return $false
             }
@@ -8005,16 +9373,16 @@ class KeybindingService {
             $hasAlt = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Alt) -ne 0
             $hasShift = ($keyInfo.Modifiers -band [System.ConsoleModifiers]::Shift) -ne 0
             
-            $expectedCtrl = $binding.Modifiers -contains \"Ctrl\"
-            $expectedAlt = $binding.Modifiers -contains \"Alt\"
-            $expectedShift = $binding.Modifiers -contains \"Shift\"
+            $expectedCtrl = $binding.Modifiers -contains "Ctrl"
+            $expectedAlt = $binding.Modifiers -contains "Alt"
+            $expectedShift = $binding.Modifiers -contains "Shift"
             
             return ($hasCtrl -eq $expectedCtrl) -and ($hasAlt -eq $expectedAlt) -and ($hasShift -eq $expectedShift)
         }
     }
     
     [string] GetAction([System.ConsoleKeyInfo]$keyInfo) {
-        return Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"GetAction\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "KeybindingService" -Context "GetAction" -ScriptBlock {
             foreach ($actionName in $this.KeyMap.Keys) {
                 if ($this.IsAction($actionName, $keyInfo)) {
                     return $actionName
@@ -8025,16 +9393,16 @@ class KeybindingService {
     }
     
     [void] RegisterGlobalHandler([string]$actionName, [scriptblock]$handler) {
-        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"RegisterGlobalHandler:$actionName\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "RegisterGlobalHandler:$actionName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($actionName)) {
-                throw [System.ArgumentException]::new(\"Action name cannot be null or empty\", \"actionName\")
+                throw [System.ArgumentException]::new("Action name cannot be null or empty", "actionName")
             }
             if ($null -eq $handler) {
-                throw [System.ArgumentNullException]::new(\"handler\", \"Handler cannot be null\")
+                throw [System.ArgumentNullException]::new("handler", "Handler cannot be null")
             }
             
             $this.GlobalHandlers[$actionName.ToLower()] = $handler
-            Write-Log -Level Debug -Message \"Registered global handler: $actionName\" -Component \"KeybindingService\"
+            Write-Log -Level Debug -Message "Registered global handler: $actionName" -Component "KeybindingService"
         }
     }
     
@@ -8043,18 +9411,18 @@ class KeybindingService {
     }
     
     [object] HandleKey([System.ConsoleKeyInfo]$keyInfo, [string]$context) {
-        return Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"HandleKey\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "KeybindingService" -Context "HandleKey" -ScriptBlock {
             # Check all registered actions
             foreach ($action in $this.KeyMap.Keys) {
                 if ($this.IsAction($action, $keyInfo, $context)) {
                     # Execute global handler if registered
                     if ($this.GlobalHandlers.ContainsKey($action)) {
-                        Write-Log -Level Debug -Message \"Executing global handler: $action\" -Component \"KeybindingService\"
+                        Write-Log -Level Debug -Message "Executing global handler: $action" -Component "KeybindingService"
                         try {
                             return & $this.GlobalHandlers[$action] -KeyInfo $keyInfo -Context $context
                         }
                         catch {
-                            Write-Log -Level Error -Message \"Global handler failed for '$action': $_\" -Component \"KeybindingService\"
+                            Write-Log -Level Error -Message "Global handler failed for '$action': $_" -Component "KeybindingService"
                             return $null
                         }
                     }
@@ -8071,7 +9439,7 @@ class KeybindingService {
     [void] PushContext([string]$context) {
         if (-not [string]::IsNullOrWhiteSpace($context)) {
             $this.ContextStack.Add($context)
-            Write-Log -Level Debug -Message \"Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))\" -Component \"KeybindingService\"
+            Write-Log -Level Debug -Message "Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
         }
     }
     
@@ -8079,7 +9447,7 @@ class KeybindingService {
         if ($this.ContextStack.Count -gt 0) {
             $context = $this.ContextStack[-1]
             $this.ContextStack.RemoveAt($this.ContextStack.Count - 1)
-            Write-Log -Level Debug -Message \"Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))\" -Component \"KeybindingService\"
+            Write-Log -Level Debug -Message "Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
             return $context
         }
         return $null
@@ -8089,7 +9457,7 @@ class KeybindingService {
         if ($this.ContextStack.Count -gt 0) {
             return $this.ContextStack[-1]
         }
-        return \"global\"
+        return "global"
     }
     
     [string] GetBindingDescription([string]$actionName) {
@@ -8099,7 +9467,7 @@ class KeybindingService {
         
         $normalizedName = $actionName.ToLower()
         if (-not $this.KeyMap.ContainsKey($normalizedName)) {
-            return \"Unbound\"
+            return "Unbound"
         }
         
         $binding = $this.KeyMap[$normalizedName]
@@ -8112,7 +9480,7 @@ class KeybindingService {
         }
         
         if ($binding.Modifiers.Count -gt 0) {
-            return \"$($binding.Modifiers -join '+') + $keyStr\"
+            return "$($binding.Modifiers -join '+') + $keyStr"
         }
         
         return $keyStr
@@ -8131,7 +9499,7 @@ class KeybindingService {
         $grouped = @{}
         foreach ($action in $this.KeyMap.Keys) {
             $parts = $action.Split('.')
-            $category = if ($parts.Count -gt 1) { $parts[0] } else { \"General\" }
+            $category = if ($parts.Count -gt 1) { $parts[0] } else { "General" }
             if (-not $grouped.ContainsKey($category)) {
                 $grouped[$category] = @{}
             }
@@ -8142,24 +9510,24 @@ class KeybindingService {
     }
     
     [void] ExportBindings([string]$path) {
-        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"ExportBindings\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "ExportBindings" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($path)) {
-                throw [System.ArgumentException]::new(\"Path cannot be null or empty\", \"path\")
+                throw [System.ArgumentException]::new("Path cannot be null or empty", "path")
             }
             
             $this.KeyMap | ConvertTo-Json -Depth 3 | Out-File -FilePath $path -Encoding UTF8
-            Write-Log -Level Info -Message \"Exported keybindings to: $path\" -Component \"KeybindingService\"
+            Write-Log -Level Info -Message "Exported keybindings to: $path" -Component "KeybindingService"
         }
     }
     
     [void] ImportBindings([string]$path) {
-        Invoke-WithErrorHandling -Component \"KeybindingService\" -Context \"ImportBindings\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "KeybindingService" -Context "ImportBindings" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($path)) {
-                throw [System.ArgumentException]::new(\"Path cannot be null or empty\", \"path\")
+                throw [System.ArgumentException]::new("Path cannot be null or empty", "path")
             }
             
             if (-not (Test-Path $path)) {
-                Write-Log -Level Warning -Message \"Keybindings file not found: $path\" -Component \"KeybindingService\"
+                Write-Log -Level Warning -Message "Keybindings file not found: $path" -Component "KeybindingService"
                 return
             }
             
@@ -8175,10 +9543,10 @@ class KeybindingService {
                         $this.KeyMap[$prop.Name].KeyChar = $prop.Value.KeyChar
                     }
                 }
-                Write-Log -Level Info -Message \"Imported keybindings from: $path\" -Component \"KeybindingService\"
+                Write-Log -Level Info -Message "Imported keybindings from: $path" -Component "KeybindingService"
             }
             catch {
-                Write-Log -Level Error -Message \"Failed to import keybindings from '$path': $_\" -Component \"KeybindingService\"
+                Write-Log -Level Error -Message "Failed to import keybindings from '$path': $_" -Component "KeybindingService"
                 throw
             }
         }
@@ -8208,7 +9576,7 @@ function Initialize-KeybindingService {
 }
 
 # Export the functions and classes
-Export-ModuleMember -Function Initialize-KeybindingService -Class 'KeybindingService'"
+Export-ModuleMember -Function Initialize-KeybindingService
 
 
 ####\services\navigation-service-class.psm1
@@ -8217,9 +9585,7 @@ Export-ModuleMember -Function Initialize-KeybindingService -Class 'KeybindingSer
 # AI: Updated with sophisticated navigation features from R2 version
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = \"Stop\"
-
-using namespace System.Collections.Generic
+$ErrorActionPreference = "Stop"
 
 #region Screen Factory Class for creating screen instances
 
@@ -8229,7 +9595,7 @@ class ScreenFactory {
     
     ScreenFactory([hashtable]$services) {
         if ($null -eq $services) {
-            throw [System.ArgumentNullException]::new(\"services\", \"Services cannot be null\")
+            throw [System.ArgumentNullException]::new("services", "Services cannot be null")
         }
         $this.Services = $services
         $this.RegisterDefaultScreens()
@@ -8238,59 +9604,56 @@ class ScreenFactory {
     hidden [void] RegisterDefaultScreens() {
         # AI: Register factory functions for both class-based and hashtable-based screens
         $this.ScreenTypes = @{
-            \"DashboardScreen\" = { param($services) $this.CreateClassBasedScreen(\"DashboardScreen\", $services) }
-            \"TaskListScreen\" = { param($services) $this.CreateClassBasedScreen(\"TaskListScreen\", $services) }
-            \"NewTaskScreen\" = { param($services) $this.CreateClassBasedScreen(\"NewTaskScreen\", $services) }
+            "DashboardScreen" = { param($services) $this.CreateClassBasedScreen("DashboardScreen", $services) }
+            "TaskListScreen" = { param($services) $this.CreateClassBasedScreen("TaskListScreen", $services) }
+            # AI: Removed NewTaskScreen until it's implemented
         }
         
         # AI: Also support function-based screens for backward compatibility
-        if (Get-Command \"Get-DashboardScreen\" -ErrorAction SilentlyContinue) {
-            $this.ScreenTypes[\"DashboardScreen\"] = { param($services) Get-DashboardScreen -Services $services }
+        if (Get-Command "Get-DashboardScreen" -ErrorAction SilentlyContinue) {
+            $this.ScreenTypes["DashboardScreen"] = { param($services) Get-DashboardScreen -Services $services }
         }
-        if (Get-Command \"Get-TaskManagementScreen\" -ErrorAction SilentlyContinue) {
-            $this.ScreenTypes[\"TaskManagementScreen\"] = { param($services) Get-TaskManagementScreen -Services $services }
+        if (Get-Command "Get-TaskManagementScreen" -ErrorAction SilentlyContinue) {
+            $this.ScreenTypes["TaskManagementScreen"] = { param($services) Get-TaskManagementScreen -Services $services }
         }
     }
     
     hidden [object] CreateClassBasedScreen([string]$screenName, [hashtable]$services) {
-        # AI: Try to create class-based screen first, fallback to function-based
-        switch ($screenName) {
-            \"DashboardScreen\" {
-                if ([DashboardScreen] -as [type]) {
-                    return [DashboardScreen]::new($services)
-                }
-            }
-            \"TaskListScreen\" {
-                if ([TaskListScreen] -as [type]) {
-                    return [TaskListScreen]::new($services)
-                }
-            }
-            \"NewTaskScreen\" {
-                if ([NewTaskScreen] -as [type]) {
-                    return [NewTaskScreen]::new($services)
+        # AI: Try to create class-based screen dynamically, fallback to function-based
+        try {
+            # Attempt to get the type dynamically without hardcoding class names
+            $screenType = "$screenName" -as [type]
+            if ($screenType) {
+                # Check if the type has a constructor that takes services
+                $constructor = $screenType.GetConstructor([type[]]@([hashtable]))
+                if ($constructor) {
+                    return $screenType::new($services)
                 }
             }
         }
+        catch {
+            # Ignore type resolution errors and fall through to function-based approach
+        }
         
         # Fallback: try to find and call a function-based screen creator
-        $functionName = \"Get-$screenName\"
+        $functionName = "Get-$screenName"
         if (Get-Command $functionName -ErrorAction SilentlyContinue) {
             return & $functionName -Services $services
         }
         
-        throw [System.InvalidOperationException]::new(\"Unable to create screen: $screenName\")
+        throw [System.InvalidOperationException]::new("Unable to create screen: $screenName")
     }
     
     [void] RegisterScreen([string]$name, [scriptblock]$factory) {
         if ([string]::IsNullOrWhiteSpace($name)) {
-            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"name\")
+            throw [System.ArgumentException]::new("Screen name cannot be null or empty", "name")
         }
         if ($null -eq $factory) {
-            throw [System.ArgumentNullException]::new(\"factory\", \"Screen factory cannot be null\")
+            throw [System.ArgumentNullException]::new("factory", "Screen factory cannot be null")
         }
         
         $this.ScreenTypes[$name] = $factory
-        Write-Log -Level Debug -Message \"Registered screen factory: $name\"
+        Write-Log -Level Debug -Message "Registered screen factory: $name"
     }
     
     [object] CreateScreen([string]$screenName) {
@@ -8299,13 +9662,13 @@ class ScreenFactory {
     
     [object] CreateScreen([string]$screenName, [hashtable]$parameters) {
         if ([string]::IsNullOrWhiteSpace($screenName)) {
-            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+            throw [System.ArgumentException]::new("Screen name cannot be null or empty", "screenName")
         }
         
         if (-not $this.ScreenTypes.ContainsKey($screenName)) {
-            $availableScreens = ($this.ScreenTypes.Keys | Sort-Object) -join \", \"
+            $availableScreens = ($this.ScreenTypes.Keys | Sort-Object) -join ", "
             throw [System.InvalidOperationException]::new(
-                \"Unknown screen type: '$screenName'. Available screens: $availableScreens\"
+                "Unknown screen type: '$screenName'. Available screens: $availableScreens"
             )
         }
         
@@ -8314,36 +9677,36 @@ class ScreenFactory {
             $screen = & $factory -services $this.Services
             
             if ($null -eq $screen) {
-                throw [System.InvalidOperationException]::new(\"Screen factory returned null for '$screenName'\")
+                throw [System.InvalidOperationException]::new("Screen factory returned null for '$screenName'")
             }
             
             # Store services reference on screen for later use
             if ($screen -is [hashtable] -and -not $screen._services) {
                 $screen._services = $this.Services
             }
-            elseif ($screen.PSObject.Properties.Name -contains \"Services\" -and -not $screen.Services) {
+            elseif ($screen.PSObject.Properties.Name -contains "Services" -and -not $screen.Services) {
                 $screen.Services = $this.Services
             }
             
             # Apply parameters to screen state
             if ($parameters -and $parameters.Count -gt 0) {
-                if ($screen -is [hashtable] -and $screen.ContainsKey(\"State\")) {
+                if ($screen -is [hashtable] -and $screen.ContainsKey("State")) {
                     foreach ($key in $parameters.Keys) {
                         $screen.State[$key] = $parameters[$key]
                     }
                 }
-                elseif ($screen.PSObject.Properties.Name -contains \"State\") {
+                elseif ($screen.PSObject.Properties.Name -contains "State") {
                     foreach ($key in $parameters.Keys) {
                         $screen.State[$key] = $parameters[$key]
                     }
                 }
             }
             
-            Write-Log -Level Debug -Message \"Created screen: $screenName\"
+            Write-Log -Level Debug -Message "Created screen: $screenName"
             return $screen
         }
         catch {
-            Write-Log -Level Error -Message \"Failed to create screen '$screenName': $_\"
+            Write-Log -Level Error -Message "Failed to create screen '$screenName': $_"
             throw
         }
     }
@@ -8364,7 +9727,7 @@ class NavigationService {
     
     NavigationService([hashtable]$services) {
         if ($null -eq $services) {
-            throw [System.ArgumentNullException]::new(\"services\", \"Services cannot be null\")
+            throw [System.ArgumentNullException]::new("services", "Services cannot be null")
         }
         
         $this.Services = $services
@@ -8372,29 +9735,29 @@ class NavigationService {
         $this.ScreenFactory = [ScreenFactory]::new($services)
         $this.InitializeRoutes()
         
-        Write-Log -Level Info -Message \"NavigationService initialized\"
+        Write-Log -Level Info -Message "NavigationService initialized"
     }
     
     hidden [void] InitializeRoutes() {
         # AI: Map URL-like paths to screen names
         $this.RouteMap = @{
-            \"/\" = \"DashboardScreen\"
-            \"/dashboard\" = \"DashboardScreen\"
-            \"/tasks\" = \"TaskListScreen\"
-            \"/new-task\" = \"NewTaskScreen\"
+            "/" = "DashboardScreen"
+            "/dashboard" = "DashboardScreen"
+            "/tasks" = "TaskListScreen"
+            # AI: Removed /new-task route until NewTaskScreen is implemented
         }
     }
     
     [void] RegisterRoute([string]$path, [string]$screenName) {
         if ([string]::IsNullOrWhiteSpace($path)) {
-            throw [System.ArgumentException]::new(\"Route path cannot be null or empty\", \"path\")
+            throw [System.ArgumentException]::new("Route path cannot be null or empty", "path")
         }
         if ([string]::IsNullOrWhiteSpace($screenName)) {
-            throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+            throw [System.ArgumentException]::new("Screen name cannot be null or empty", "screenName")
         }
         
         $this.RouteMap[$path] = $screenName
-        Write-Log -Level Debug -Message \"Registered route: $path -> $screenName\"
+        Write-Log -Level Debug -Message "Registered route: $path -> $screenName"
     }
     
     [void] PushScreen([string]$screenName) {
@@ -8402,28 +9765,28 @@ class NavigationService {
     }
     
     [void] PushScreen([string]$screenName, [hashtable]$parameters) {
-        Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"PushScreen:$screenName\" -ScriptBlock {
+        Invoke-WithErrorHandling -Component "NavigationService" -Context "PushScreen:$screenName" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($screenName)) {
-                throw [System.ArgumentException]::new(\"Screen name cannot be null or empty\", \"screenName\")
+                throw [System.ArgumentException]::new("Screen name cannot be null or empty", "screenName")
             }
             
             # Check stack depth limit
             if ($this.ScreenStack.Count -ge $this.MaxStackDepth) {
                 throw [System.InvalidOperationException]::new(
-                    \"Navigation stack depth limit reached ($($this.MaxStackDepth))\"
+                    "Navigation stack depth limit reached ($($this.MaxStackDepth))"
                 )
             }
             
-            Write-Log -Level Info -Message \"Pushing screen: $screenName\"
+            Write-Log -Level Info -Message "Pushing screen: $screenName"
             
             # Handle current screen exit
             if ($null -ne $this.CurrentScreen) {
                 try {
-                    $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                    $this.CallScreenMethod($this.CurrentScreen, "OnExit")
                     $this.ScreenStack.Push($this.CurrentScreen)
                 }
                 catch {
-                    Write-Log -Level Warning -Message \"Error during current screen cleanup: $_\"
+                    Write-Log -Level Warning -Message "Error during current screen cleanup: $_"
                 }
             }
             
@@ -8435,31 +9798,31 @@ class NavigationService {
             
             # Initialize the new screen
             try {
-                $this.CallScreenMethod($newScreen, \"Initialize\", $this.Services)
-                $this.CallScreenMethod($newScreen, \"OnEnter\")
+                $this.CallScreenMethod($newScreen, "Initialize", $this.Services)
+                $this.CallScreenMethod($newScreen, "OnEnter")
             }
             catch {
-                Write-Log -Level Error -Message \"Failed to initialize screen '$screenName': $_\"
+                Write-Log -Level Error -Message "Failed to initialize screen '$screenName': $_"
                 throw
             }
             
             # Track navigation history
-            $this.TrackNavigation($screenName, \"Push\")
+            $this.TrackNavigation($screenName, "Push")
             
             # Update TUI state if available
             if ($global:TuiState) {
                 $global:TuiState.CurrentScreen = $newScreen
-                if (Get-Command \"Request-TuiRefresh\" -ErrorAction SilentlyContinue) {
+                if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
                     Request-TuiRefresh
                 }
             }
             
             # Publish navigation event
-            if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+            if (Get-Command "Publish-Event" -ErrorAction SilentlyContinue) {
                 # AI: Ensure event data is serializable
                 $eventData = @{
                     Screen = $screenName
-                    Action = \"Push\"
+                    Action = "Push"
                     StackDepth = $this.ScreenStack.Count + 1
                 }
                 
@@ -8477,29 +9840,29 @@ class NavigationService {
                     }
                 }
                 
-                Publish-Event -EventName \"Navigation.ScreenChanged\" -Data $eventData
+                Publish-Event -EventName "Navigation.ScreenChanged" -Data $eventData
             }
             
-            Write-Log -Level Debug -Message \"Screen '$screenName' pushed successfully. Stack depth: $($this.ScreenStack.Count + 1)\"
+            Write-Log -Level Debug -Message "Screen '$screenName' pushed successfully. Stack depth: $($this.ScreenStack.Count + 1)"
         }
     }
     
     [bool] PopScreen() {
-        return Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"PopScreen\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "NavigationService" -Context "PopScreen" -ScriptBlock {
             if ($this.ScreenStack.Count -eq 0) {
-                Write-Log -Level Warning -Message \"Cannot pop screen: stack is empty\"
+                Write-Log -Level Warning -Message "Cannot pop screen: stack is empty"
                 return $false
             }
             
-            Write-Log -Level Info -Message \"Popping screen\"
+            Write-Log -Level Info -Message "Popping screen"
             
             # Exit current screen
             if ($null -ne $this.CurrentScreen) {
                 try {
-                    $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                    $this.CallScreenMethod($this.CurrentScreen, "OnExit")
                 }
                 catch {
-                    Write-Log -Level Warning -Message \"Error during screen exit: $_\"
+                    Write-Log -Level Warning -Message "Error during screen exit: $_"
                 }
             }
             
@@ -8509,32 +9872,32 @@ class NavigationService {
             # Resume previous screen
             if ($null -ne $this.CurrentScreen) {
                 try {
-                    $this.CallScreenMethod($this.CurrentScreen, \"OnResume\")
+                    $this.CallScreenMethod($this.CurrentScreen, "OnResume")
                 }
                 catch {
-                    Write-Log -Level Warning -Message \"Error during screen resume: $_\"
+                    Write-Log -Level Warning -Message "Error during screen resume: $_"
                 }
                 
                 # Update TUI state
                 if ($global:TuiState) {
                     $global:TuiState.CurrentScreen = $this.CurrentScreen
-                    if (Get-Command \"Request-TuiRefresh\" -ErrorAction SilentlyContinue) {
+                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
                         Request-TuiRefresh
                     }
                 }
             }
             
             # Publish event
-            if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
+            if (Get-Command "Publish-Event" -ErrorAction SilentlyContinue) {
                 $screenName = if ($this.CurrentScreen -is [hashtable] -and $this.CurrentScreen.Name) {
                     $this.CurrentScreen.Name
-                } elseif ($this.CurrentScreen.PSObject.Properties.Name -contains \"Name\") {
+                } elseif ($this.CurrentScreen.PSObject.Properties.Name -contains "Name") {
                     $this.CurrentScreen.Name
                 } else {
                     $null
                 }
                 
-                Publish-Event -EventName \"Navigation.ScreenPopped\" -Data @{
+                Publish-Event -EventName "Navigation.ScreenPopped" -Data @{
                     CurrentScreen = $screenName
                     StackDepth = $this.ScreenStack.Count
                 }
@@ -8549,23 +9912,23 @@ class NavigationService {
     }
     
     [bool] GoTo([string]$path, [hashtable]$parameters) {
-        return Invoke-WithErrorHandling -Component \"NavigationService\" -Context \"GoTo:$path\" -ScriptBlock {
+        return Invoke-WithErrorHandling -Component "NavigationService" -Context "GoTo:$path" -ScriptBlock {
             if ([string]::IsNullOrWhiteSpace($path)) {
-                throw [System.ArgumentException]::new(\"Navigation path cannot be null or empty\", \"path\")
+                throw [System.ArgumentException]::new("Navigation path cannot be null or empty", "path")
             }
             
-            Write-Log -Level Info -Message \"Navigating to path: $path\"
+            Write-Log -Level Info -Message "Navigating to path: $path"
             
             # Handle special cases
-            if ($path -eq \"/exit\") {
+            if ($path -eq "/exit") {
                 $this.RequestExit()
                 return $true
             }
             
             # Map path to screen name
             if (-not $this.RouteMap.ContainsKey($path)) {
-                $availableRoutes = ($this.RouteMap.Keys | Sort-Object) -join \", \"
-                Write-Log -Level Warning -Message \"Unknown navigation path: $path. Available routes: $availableRoutes\"
+                $availableRoutes = ($this.RouteMap.Keys | Sort-Object) -join ", "
+                Write-Log -Level Warning -Message "Unknown navigation path: $path. Available routes: $availableRoutes"
                 return $false
             }
             
@@ -8576,14 +9939,14 @@ class NavigationService {
                 return $true
             }
             catch {
-                Write-Log -Level Error -Message \"Failed to navigate to '$screenName' via path '$path': $_\"
+                Write-Log -Level Error -Message "Failed to navigate to '$screenName' via path '$path': $_"
                 return $false
             }
         }
     }
     
     [void] RequestExit() {
-        Write-Log -Level Info -Message \"Exit requested\"
+        Write-Log -Level Info -Message "Exit requested"
         
         # Clean up all screens
         while ($this.ScreenStack.Count -gt 0) {
@@ -8591,28 +9954,28 @@ class NavigationService {
                 $this.PopScreen()
             }
             catch {
-                Write-Log -Level Warning -Message \"Error during exit cleanup: $_\"
+                Write-Log -Level Warning -Message "Error during exit cleanup: $_"
             }
         }
         
         # Exit current screen
         if ($null -ne $this.CurrentScreen) {
             try {
-                $this.CallScreenMethod($this.CurrentScreen, \"OnExit\")
+                $this.CallScreenMethod($this.CurrentScreen, "OnExit")
             }
             catch {
-                Write-Log -Level Warning -Message \"Error during final screen cleanup: $_\"
+                Write-Log -Level Warning -Message "Error during final screen cleanup: $_"
             }
         }
         
         # Stop TUI engine if available
-        if (Get-Command \"Stop-TuiEngine\" -ErrorAction SilentlyContinue) {
+        if (Get-Command "Stop-TuiEngine" -ErrorAction SilentlyContinue) {
             Stop-TuiEngine
         }
         
         # Publish exit event
-        if (Get-Command \"Publish-Event\" -ErrorAction SilentlyContinue) {
-            Publish-Event -EventName \"Application.Exit\" -Data @{}
+        if (Get-Command "Publish-Event" -ErrorAction SilentlyContinue) {
+            Publish-Event -EventName "Application.Exit" -Data @{}
         }
     }
     
@@ -8667,7 +10030,7 @@ class NavigationService {
             }
         }
         catch {
-            Write-Log -Level Warning -Message \"Error calling screen method '$methodName': $_\"
+            Write-Log -Level Warning -Message "Error calling screen method '$methodName': $_"
         }
     }
     
@@ -8685,7 +10048,7 @@ class NavigationService {
         $this.NavigationHistory[$screenName].VisitCount++
         $this.NavigationHistory[$screenName].LastVisit = $timestamp
         
-        Write-Log -Level Debug -Message \"Tracked navigation: $screenName ($action)\"
+        Write-Log -Level Debug -Message "Tracked navigation: $screenName ($action)"
     }
 }
 
@@ -8696,14 +10059,14 @@ function Initialize-NavigationService {
     param([hashtable]$Services)
     
     if (-not $Services) {
-        throw [System.ArgumentNullException]::new(\"Services\", \"Services parameter is required\")
+        throw [System.ArgumentNullException]::new("Services", "Services parameter is required")
     }
     
     return [NavigationService]::new($Services)
 }
 
 # Export the functions and classes
-Export-ModuleMember -Function Initialize-NavigationService -Class 'NavigationService', 'ScreenFactory'"
+Export-ModuleMember -Function Initialize-NavigationService
 
 
 ####\utilities\DO_NOT_USE\file_util.ps1
@@ -8828,6 +10191,80 @@ if ($doConcatenate -and $renamedFiles.Count -gt 0) {
 
 Write-Host "`n--- Process Complete! ---" -ForegroundColor Green
 Read-Host "Press Enter to exit"
+
+
+####\utilities\DO_NOT_USE\test-module-loading.ps1
+# Test script to verify module loading works correctly
+# This script mimics the loading sequence from _CLASSY-MAIN.ps1
+
+# Import models module classes globally (must be at top of file)
+using module .\modules\models.psm1
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$BasePath = $PSScriptRoot
+
+try {
+    Write-Host "Testing module loading sequence..." -ForegroundColor Cyan
+    
+    # Step 1: Verify models were loaded
+    Write-Host "1. Verifying models module loaded..." -ForegroundColor Yellow
+    Write-Host "   ✓ Models module loaded via using statement" -ForegroundColor Green
+    
+    # Step 2: Test if classes are available
+    Write-Host "2. Testing class availability..." -ForegroundColor Yellow
+    $testTask = [PmcTask]::new("Test Task")
+    $testProject = [PmcProject]::new("TEST", "Test Project")
+    Write-Host "   ✓ Classes are available: PmcTask, PmcProject" -ForegroundColor Green
+    
+    # Step 3: Load core modules
+    Write-Host "3. Loading core modules..." -ForegroundColor Yellow
+    Import-Module "$BasePath\modules\exceptions.psm1" -Force
+    Import-Module "$BasePath\modules\logger.psm1" -Force  
+    Import-Module "$BasePath\modules\event-system.psm1" -Force
+    Write-Host "   ✓ Core modules loaded" -ForegroundColor Green
+    
+    # Step 4: Load data-manager module
+    Write-Host "4. Loading data-manager module..." -ForegroundColor Yellow
+    Import-Module "$BasePath\modules\data-manager.psm1" -Force
+    Write-Host "   ✓ Data-manager module loaded successfully!" -ForegroundColor Green
+    
+    # Step 5: Test DataManager class instantiation
+    Write-Host "5. Testing DataManager class..." -ForegroundColor Yellow
+    $dataManager = [DataManager]::new()
+    Write-Host "   ✓ DataManager class instantiated successfully!" -ForegroundColor Green
+    
+    # Step 6: Load keybinding-service module (this was failing before)
+    Write-Host "6. Loading keybinding-service module..." -ForegroundColor Yellow
+    Import-Module "$BasePath\services\keybinding-service.psm1" -Force
+    Write-Host "   ✓ Keybinding-service module loaded successfully!" -ForegroundColor Green
+    
+    # Step 7: Load navigation-service-class module
+    Write-Host "7. Loading navigation-service-class module..." -ForegroundColor Yellow
+    Import-Module "$BasePath\services\navigation-service-class.psm1" -Force
+    Write-Host "   ✓ Navigation-service-class module loaded successfully!" -ForegroundColor Green
+    
+    # Step 8: Test service class instantiation
+    Write-Host "8. Testing service class instantiation..." -ForegroundColor Yellow
+    $keybindingService = [KeybindingService]::new()
+    $testServices = @{ DataManager = $dataManager }
+    $navigationService = [NavigationService]::new($testServices)
+    Write-Host "   ✓ Service classes instantiated successfully!" -ForegroundColor Green
+    
+    Write-Host "`nAll tests passed! The module loading issues have been resolved." -ForegroundColor Green
+    Write-Host "✓ Model classes load correctly" -ForegroundColor Green
+    Write-Host "✓ Data-manager module loads without type errors" -ForegroundColor Green
+    Write-Host "✓ Keybinding-service module loads without syntax errors" -ForegroundColor Green
+    Write-Host "✓ Navigation-service-class module loads without syntax errors" -ForegroundColor Green
+    Write-Host "✓ All classes can be instantiated successfully" -ForegroundColor Green
+    
+} catch {
+    Write-Host "`nERROR: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Gray
+    exit 1
+}
+
 
 
 ####\utilities\context-helpers.psm1
@@ -10884,7 +12321,7 @@ $script:ModulesToLoad = @(
 
     # Services (class-based)
     @{ Name = "keybinding-service"; Path = "services\keybinding-service.psm1"; Required = $true },
-    @{ Name = "navigation-service-class"; Path = "services\navigation-service-class.psm1"; Required = $true },
+    @{ Name = "navigation-service"; Path = "services\navigation-service-class.psm1"; Required = $true },
 
     # Layout system
     @{ Name = "panels-class"; Path = "layout\panels-class.psm1"; Required = $true },
@@ -10895,8 +12332,9 @@ $script:ModulesToLoad = @(
     # Components (depend on engine and panels)
     @{ Name = "advanced-input-components"; Path = "components\advanced-input-components.psm1"; Required = $true },
     @{ Name = "advanced-data-components"; Path = "components\advanced-data-components.psm1"; Required = $true },
+    @{ Name = "tui-components"; Path = "components\tui-components.psm1"; Required = $false },
 
-    # UI Classes (depend on engine)
+    # UI Classes (depend on engine and models) - MUST be loaded in dependency order
     @{ Name = "ui-classes"; Path = "components\ui-classes.psm1"; Required = $true },
     @{ Name = "panel-classes"; Path = "components\panel-classes.psm1"; Required = $true },
     @{ Name = "table-class"; Path = "components\table-class.psm1"; Required = $true },
@@ -10913,7 +12351,7 @@ $script:ScreenModules = @(
 function Initialize-PMCModules {
     param([bool]$Silent = $false)
     
-    return Invoke-WithErrorHandling -ScriptBlock {
+    return Invoke-WithErrorHandling -Component "ModuleLoader" -ScriptBlock {
         if (-not $Silent) {
             Write-Host "Verifying console environment..." -ForegroundColor Gray
         }
@@ -10967,7 +12405,7 @@ function Initialize-PMCModules {
 function Initialize-PMCScreens {
     param([bool]$Silent = $false)
     
-    return Invoke-WithErrorHandling -ScriptBlock {
+    return Invoke-WithErrorHandling -Component "ScreenLoader" -ScriptBlock {
         if (-not $Silent) { Write-Host "Loading screens..." -ForegroundColor Cyan }
         
         $loadedScreens = @()
@@ -10991,7 +12429,7 @@ function Initialize-PMCScreens {
 function Start-PMCTerminal {
     param([bool]$Silent = $false)
     
-    Invoke-WithErrorHandling -ScriptBlock {
+    Invoke-WithErrorHandling -Component "Main" -ScriptBlock {
         Write-Log -Level Info -Message "PMC Terminal v5 'Helios' Class-Based startup initiated."
         
         # --- 1. Load Core Modules ---
@@ -11056,19 +12494,22 @@ function Start-PMCTerminal {
             "/dashboard"
         }
         
-        # AI: Check if navigation service has route validation
-        if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue)) {
-            if (-not $services.Navigation.IsValidRoute($startPath)) {
+        # AI: Use clean navigation abstraction - no direct access to internals
+        if ($services.Navigation) {
+            # Check if route is valid before navigating
+            if ((Get-Member -InputObject $services.Navigation -Name "IsValidRoute" -ErrorAction SilentlyContinue) -and 
+                -not $services.Navigation.IsValidRoute($startPath)) {
                 Write-Log -Level Warning -Message "Startup path '$startPath' is not valid. Defaulting to /dashboard."
                 $startPath = "/dashboard"
             }
-            [void]$services.Navigation.GoTo($startPath)
-        } else {
-            # Fallback navigation
-            Write-Log -Level Info -Message "Using fallback navigation to initial screen"
-            if ($services.Navigation -and (Get-Member -InputObject $services.Navigation -Name "PushScreen" -ErrorAction SilentlyContinue)) {
-                $services.Navigation.PushScreen("DashboardScreen")
+            
+            # Navigate using the GoTo method - returns boolean indicating success
+            $navigationResult = $services.Navigation.GoTo($startPath)
+            if (-not $navigationResult) {
+                throw "Failed to navigate to initial screen at path: $startPath"
             }
+        } else {
+            throw "Navigation service is not available"
         }
         
         # --- 7. Start the Main Loop ---
@@ -11122,17 +12563,20 @@ finally {
         Write-Log -Level Info -Message "Application shutting down."
     }
     
-    if ($global:Services -and $global:Services.DataManager) {
-        try {
-            if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
-                $global:Services.DataManager.SaveData()
-                if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
-                    Write-Log -Level Info -Message "Data saved successfully."
+    # AI: Check if $global:Services exists before trying to access it
+    if (Test-Path Variable:global:Services) {
+        if ($global:Services -and $global:Services.DataManager) {
+            try {
+                if (Get-Member -InputObject $global:Services.DataManager -Name "SaveData" -ErrorAction SilentlyContinue) {
+                    $global:Services.DataManager.SaveData()
+                    if (Get-Command Write-Log -ErrorAction SilentlyContinue) {
+                        Write-Log -Level Info -Message "Data saved successfully."
+                    }
                 }
             }
-        }
-        catch {
-            Write-Warning "Failed to save data on exit: $_"
+            catch {
+                Write-Warning "Failed to save data on exit: $_"
+            }
         }
     }
 }

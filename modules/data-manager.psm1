@@ -2,9 +2,7 @@
 # Unified data persistence and CRUD operations with event integration
 # AI: Refactored from dispatch-based actions to direct function calls
 # AI: Now uses strongly-typed PmcTask and PmcProject classes from models module
-
-# AI: Using absolute path for models module to ensure proper loading
-using module $PSScriptRoot\models.psm1
+# AI: REMOVED invalid 'using module' statement. Dependencies are now managed by _CLASSY-MAIN.ps1.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
