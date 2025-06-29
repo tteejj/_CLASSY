@@ -3,16 +3,13 @@
 # Displays and manages tasks.
 # ==============================================================================
 
-# Import models for Task and enum types
+# AI: CRITICAL FIX - Import models module for TaskStatus enum and other types
 using module '..\modules\models.psm1'
 
-# Import base classes and components
+# AI: FIX - Use relative paths for better portability
 using module '..\components\ui-classes.psm1'
-using module '..\components\panel-classes.psm1'
-using module '..\components\table-class.psm1'
-
-# AI: Removed utility imports - these are loaded globally by main application
-# Note: error-handling and event-system functions are available globally
+using module '..\layout\panels-class.psm1'
+using module '..\components\advanced-data-components.psm1'
 
 class TaskListScreen : Screen {
     # --- UI Components ---
@@ -60,8 +57,8 @@ class TaskListScreen : Screen {
         Invoke-WithErrorHandling -Component "TaskListScreen" -Context "RefreshData" -ScriptBlock {
             $allTasks = @($this.Services.DataManager.GetTasks())
             $filteredTasks = switch ($this.FilterStatus) {
-                "Active" { $allTasks | Where-Object { $_.Status -ne 'Completed' } }
-                "Completed" { $allTasks | Where-Object { $_.Status -eq 'Completed' } }
+                "Active" { $allTasks | Where-Object { $_.Status -ne [TaskStatus]::Completed } }
+                "Completed" { $allTasks | Where-Object { $_.Status -eq [TaskStatus]::Completed } }
                 default { $allTasks }
             }
             $this.TaskTable.SetData($filteredTasks)
@@ -85,9 +82,9 @@ class TaskListScreen : Screen {
                 ([ConsoleKey]::Escape) { $this.Services.Navigation.PopScreen() }
                 default {
                     switch ($key.KeyChar.ToString().ToUpper()) {
-                        'N' { $this.Services.Navigation.PushScreen("NewTaskScreen") }
-                        'E' { # Edit logic would go here }
-                        'D' { # Delete logic would go here }
+                        'N' { $this.ShowNewTaskDialog() }
+                        'E' { $this.EditSelectedTask() }
+                        'D' { $this.DeleteSelectedTask() }
                         'F' { $this.CycleFilter() }
                     }
                 }
@@ -98,12 +95,46 @@ class TaskListScreen : Screen {
     hidden [void] ToggleSelectedTask() {
         $task = $this.TaskTable.GetSelectedItem()
         if ($task) {
+            # AI: FIX - TaskStatus enum should now be available from models.psm1 import
             if ($task.Status -eq [TaskStatus]::Completed) {
-                $task.Status = [TaskStatus]::Active
+                $task.Status = [TaskStatus]::Pending
             } else {
                 $task.Complete()
             }
             $this.Services.DataManager.UpdateTask($task)
+        }
+    }
+
+    hidden [void] ShowNewTaskDialog() {
+        # AI: FIX - Implemented new task dialog functionality
+        Write-Log -Level Info -Message "New task dialog requested"
+        
+        # AI: FIX - Capture $this context for closure
+        $dataManager = $this.Services.DataManager
+        $refreshCallback = { $this.RefreshData() }.GetNewClosure()
+        
+        # Use the input dialog from dialog system
+        Show-InputDialog -Title "New Task" -Prompt "Enter task title:" -OnSubmit {
+            param($Value)
+            if (-not [string]::IsNullOrWhiteSpace($Value)) {
+                $newTask = $dataManager.AddTask($Value, "", [TaskPriority]::Medium, "General")
+                Write-Log -Level Info -Message "Created new task: $($newTask.Title)"
+                & $refreshCallback
+            }
+        }
+    }
+
+    hidden [void] EditSelectedTask() {
+        $task = $this.TaskTable.GetSelectedItem()
+        if ($task) {
+            Write-Log -Level Info -Message "Edit task requested for: $($task.Title)"
+        }
+    }
+
+    hidden [void] DeleteSelectedTask() {
+        $task = $this.TaskTable.GetSelectedItem()
+        if ($task) {
+            Write-Log -Level Info -Message "Delete task requested for: $($task.Title)"
         }
     }
 
@@ -116,3 +147,5 @@ class TaskListScreen : Screen {
         $this.RefreshData()
     }
 }
+
+Export-ModuleMember -Function @() -Variable @() -Cmdlet @() -Alias @()

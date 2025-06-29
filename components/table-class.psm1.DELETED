@@ -1,81 +1,120 @@
 # ==============================================================================
-# PMC Terminal v5 - Class-Based Navigation Menu Component
-# Provides a reusable menu component driven by keyboard shortcuts.
+# PMC Terminal v5 - Simple Table Classes
+# Basic table and column classes for displaying tabular data.
 # ==============================================================================
 
-# Import base classes this module extends
-using module '.\ui-classes.psm1'
+# Import base classes
+using module 'C:\Users\jhnhe\Documents\GitHub\_XP\components\ui-classes.psm1'
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# Import utilities
-Import-Module -Name "$PSScriptRoot\..\utilities\error-handling.psm1" -Force
-
-# --- NavigationItem Class ---
-# Represents a single, executable item within a NavigationMenu.
-class NavigationItem {
+# --- TableColumn Class ---
+class TableColumn {
     [string]$Key
-    [string]$Label
-    [scriptblock]$Action
-    [bool]$Enabled = $true
+    [string]$Header
+    [int]$Width
+    [string]$Alignment = "Left"
     
-    NavigationItem([string]$key, [string]$label, [scriptblock]$action) {
-        if ([string]::IsNullOrWhiteSpace($key)) { throw [System.ArgumentException]::new("key") }
-        if ([string]::IsNullOrWhiteSpace($label)) { throw [System.ArgumentException]::new("label") }
-        if (-not $action) { throw [System.ArgumentNullException]::new("action") }
+    TableColumn([string]$key, [string]$header, [int]$width) {
+        $this.Key = $key
+        $this.Header = $header
+        $this.Width = $width
+    }
+}
+
+# --- Table Class ---
+class Table : Component {
+    [System.Collections.Generic.List[TableColumn]]$Columns
+    [object[]]$Data = @()
+    [int]$SelectedIndex = 0
+    [bool]$ShowBorder = $true
+    [bool]$ShowHeader = $true
+    
+    Table([string]$name) : base($name) {
+        $this.Columns = [System.Collections.Generic.List[TableColumn]]::new()
+    }
+    
+    [void] SetColumns([TableColumn[]]$columns) {
+        $this.Columns.Clear()
+        foreach ($col in $columns) {
+            $this.Columns.Add($col)
+        }
+    }
+    
+    [void] SetData([object[]]$data) {
+        $this.Data = $data ?? @()
+        if ($this.SelectedIndex -ge $this.Data.Count) {
+            $this.SelectedIndex = [Math]::Max(0, $this.Data.Count - 1)
+        }
+    }
+    
+    [void] SelectNext() {
+        if ($this.SelectedIndex -lt ($this.Data.Count - 1)) {
+            $this.SelectedIndex++
+        }
+    }
+    
+    [void] SelectPrevious() {
+        if ($this.SelectedIndex -gt 0) {
+            $this.SelectedIndex--
+        }
+    }
+    
+    [object] GetSelectedItem() {
+        if ($this.Data.Count -gt 0 -and $this.SelectedIndex -ge 0 -and $this.SelectedIndex -lt $this.Data.Count) {
+            return $this.Data[$this.SelectedIndex]
+        }
+        return $null
+    }
+    
+    [string] _RenderContent() {
+        $content = [System.Text.StringBuilder]::new()
         
-        $this.Key = $key.ToUpper()
-        $this.Label = $label
-        $this.Action = $action
-    }
-
-    [void] Execute() {
-        if (-not $this.Enabled) { return }
-        Invoke-WithErrorHandling -Component "NavigationItem" -Context "Execute:$($this.Key)" -ScriptBlock {
-            & $this.Action
-        }
-    }
-}
-
-# --- NavigationMenu Class ---
-# A component that renders a list of NavigationItems and executes their actions.
-class NavigationMenu : Component {
-    [System.Collections.Generic.List[NavigationItem]]$Items
-    [string]$Orientation = "Horizontal" # 'Horizontal' or 'Vertical'
-    [string]$Separator = " | "
-
-    NavigationMenu([string]$name) : base($name) {
-        $this.Items = [System.Collections.Generic.List[NavigationItem]]::new()
-    }
-
-    [void] AddItem([NavigationItem]$item) {
-        if (-not $item) { throw [System.ArgumentNullException]::new("item") }
-        $this.Items.Add($item)
-    }
-
-    [void] ExecuteActionByKey([string]$key) {
-        $item = $this.Items.Find({ param($i) $i.Key -eq $key.ToUpper() })
-        if ($item) { $item.Execute() }
-    }
-
-    # AI: Implements the abstract _RenderContent from UIElement.
-    hidden [string] _RenderContent() {
-        $sb = [System.Text.StringBuilder]::new()
-        $visibleItems = $this.Items | Where-Object { $_.Visible -ne $false }
-
-        if ($this.Orientation -eq "Horizontal") {
-            $line = $visibleItems.ForEach({
-                $text = if ($_.Enabled) { "[$($_.Key)]$($_.Label)" } else { "(dim)[$($_.Key)]$($_.Label)(/dim)" }
-                $text
-            }) -join $this.Separator
-            [void]$sb.Append($line)
-        } else {
-            foreach ($item in $visibleItems) {
-                $text = if ($item.Enabled) { "[$($item.Key)] $($item.Label)" } else { "(dim)[$($item.Key)] $($item.Label)(/dim)" }
-                [void]$sb.AppendLine($text)
+        # Header
+        if ($this.ShowHeader -and $this.Columns.Count -gt 0) {
+            $headerLine = ""
+            foreach ($col in $this.Columns) {
+                $headerText = $col.Header.PadRight($col.Width).Substring(0, [Math]::Min($col.Header.Length, $col.Width))
+                $headerLine += $headerText + " "
             }
+            [void]$content.AppendLine($headerLine.TrimEnd())
+            [void]$content.AppendLine("-" * $headerLine.TrimEnd().Length)
         }
-        return $sb.ToString()
+        
+        # Data rows
+        for ($i = 0; $i -lt $this.Data.Count; $i++) {
+            $row = $this.Data[$i]
+            $rowLine = ""
+            $isSelected = ($i -eq $this.SelectedIndex)
+            
+            foreach ($col in $this.Columns) {
+                $cellValue = ""
+                if ($row -is [hashtable] -and $row.ContainsKey($col.Key)) {
+                    $cellValue = $row[$col.Key]?.ToString() ?? ""
+                } elseif ($row.PSObject.Properties[$col.Key]) {
+                    $cellValue = $row.($col.Key)?.ToString() ?? ""
+                }
+                
+                $cellText = $cellValue.PadRight($col.Width).Substring(0, [Math]::Min($cellValue.Length, $col.Width))
+                $rowLine += $cellText + " "
+            }
+            
+            $finalLine = $rowLine.TrimEnd()
+            if ($isSelected) {
+                $finalLine = "> $finalLine"
+            } else {
+                $finalLine = "  $finalLine"
+            }
+            [void]$content.AppendLine($finalLine)
+        }
+        
+        if ($this.Data.Count -eq 0) {
+            [void]$content.AppendLine("  No data to display")
+        }
+        
+        return $content.ToString()
     }
 }
+
+Export-ModuleMember -Function @() -Variable @() -Cmdlet @() -Alias @()

@@ -1,13 +1,127 @@
 # Advanced Data Components Module for PMC Terminal v5
 # Enhanced data display components with sorting, filtering, and pagination
-# AI: FIX - Removed using module and Import-Module statements. Dependencies managed by _CLASSY-MAIN.ps1.
+
+using namespace System.Text
+using namespace System.Management.Automation
+using module ..\components\ui-classes.psm1
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+#region Simple Table Classes
+
+class TableColumn {
+    [string]$Key
+    [string]$Header
+    [int]$Width
+    [string]$Alignment = "Left"
+    
+    TableColumn([string]$key, [string]$header, [int]$width) {
+        $this.Key = $key
+        $this.Header = $header
+        $this.Width = $width
+    }
+}
+
+class Table : Component {
+    [System.Collections.Generic.List[TableColumn]]$Columns
+    [object[]]$Data = @()
+    [int]$SelectedIndex = 0
+    [bool]$ShowBorder = $true
+    [bool]$ShowHeader = $true
+    
+    Table([string]$name) : base($name) {
+        $this.Columns = [System.Collections.Generic.List[TableColumn]]::new()
+    }
+    
+    [void] SetColumns([TableColumn[]]$columns) {
+        $this.Columns.Clear()
+        foreach ($col in $columns) {
+            $this.Columns.Add($col)
+        }
+    }
+    
+    [void] SetData([object[]]$data) {
+        $this.Data = $data ?? @()
+        if ($this.SelectedIndex -ge $this.Data.Count) {
+            $this.SelectedIndex = [Math]::Max(0, $this.Data.Count - 1)
+        }
+    }
+    
+    [void] SelectNext() {
+        if ($this.SelectedIndex -lt ($this.Data.Count - 1)) {
+            $this.SelectedIndex++
+        }
+    }
+    
+    [void] SelectPrevious() {
+        if ($this.SelectedIndex -gt 0) {
+            $this.SelectedIndex--
+        }
+    }
+    
+    [object] GetSelectedItem() {
+        if ($this.Data.Count -gt 0 -and $this.SelectedIndex -ge 0 -and $this.SelectedIndex -lt $this.Data.Count) {
+            return $this.Data[$this.SelectedIndex]
+        }
+        return $null
+    }
+    
+    [string] _RenderContent() {
+        $content = [System.Text.StringBuilder]::new()
+        
+        # Header
+        if ($this.ShowHeader -and $this.Columns.Count -gt 0) {
+            $headerLine = ""
+            foreach ($col in $this.Columns) {
+                $headerText = $col.Header.PadRight($col.Width).Substring(0, [Math]::Min($col.Header.Length, $col.Width))
+                $headerLine += $headerText + " "
+            }
+            [void]$content.AppendLine($headerLine.TrimEnd())
+            [void]$content.AppendLine("-" * $headerLine.TrimEnd().Length)
+        }
+        
+        # Data rows
+        for ($i = 0; $i -lt $this.Data.Count; $i++) {
+            $row = $this.Data[$i]
+            $rowLine = ""
+            $isSelected = ($i -eq $this.SelectedIndex)
+            
+            foreach ($col in $this.Columns) {
+                $cellValue = ""
+                if ($row -is [hashtable] -and $row.ContainsKey($col.Key)) {
+                    $cellValue = $row[$col.Key]?.ToString() ?? ""
+                } elseif ($row.PSObject.Properties[$col.Key]) {
+                    $cellValue = $row.($col.Key)?.ToString() ?? ""
+                }
+                
+                $cellText = $cellValue.PadRight($col.Width).Substring(0, [Math]::Min($cellValue.Length, $col.Width))
+                $rowLine += $cellText + " "
+            }
+            
+            $finalLine = $rowLine.TrimEnd()
+            if ($isSelected) {
+                $finalLine = "> $finalLine"
+            } else {
+                $finalLine = "  $finalLine"
+            }
+            [void]$content.AppendLine($finalLine)
+        }
+        
+        if ($this.Data.Count -eq 0) {
+            [void]$content.AppendLine("  No data to display")
+        }
+        
+        return $content.ToString()
+    }
+}
+
+#endregion
+
 #region Advanced Data Table Class
 
 class DataTableComponent : UIElement {
+    # ... (class content is unchanged) ...
     [hashtable[]] $Data = @()
     [hashtable[]] $Columns = @()
     [int] $X = 0
@@ -19,10 +133,10 @@ class DataTableComponent : UIElement {
     [bool] $IsFocusable = $true
     [int] $SelectedRow = 0
     [int] $ScrollOffset = 0
-    [string] $SortColumn = $null
+    [string] $SortColumn
     [string] $SortDirection = "Ascending"
     [string] $FilterText = ""
-    [string] $FilterColumn = $null
+    [string] $FilterColumn
     [int] $PageSize = 0  # 0 = auto-calculate
     [int] $CurrentPage = 0
     [bool] $ShowHeader = $true
@@ -40,8 +154,8 @@ class DataTableComponent : UIElement {
     hidden [int] $_lastRenderedHeight = 0
     
     # Event handlers
-    [scriptblock] $OnRowSelect = $null
-    [scriptblock] $OnSelectionChange = $null
+    [scriptblock] $OnRowSelect
+    [scriptblock] $OnSelectionChange
     
     DataTableComponent([string]$name) : base($name) {
         $this.IsFocusable = $true
@@ -99,10 +213,10 @@ class DataTableComponent : UIElement {
             
             # Calculate page size if auto
             if ($this.PageSize -eq 0) {
-                $headerLines = if ($this.ShowHeader) { 3 } else { 0 }
-                $footerLines = if ($this.ShowFooter) { 2 } else { 0 }
-                $filterLines = if ($this.AllowFilter) { 2 } else { 0 }
-                $borderAdjust = if ($this.ShowBorder) { 2 } else { 0 }
+                $headerLines = $this.ShowHeader ? 3 : 0
+                $footerLines = $this.ShowFooter ? 2 : 0
+                $filterLines = $this.AllowFilter ? 2 : 0
+                $borderAdjust = $this.ShowBorder ? 2 : 0
                 $calculatedPageSize = $this.Height - $headerLines - $footerLines - $filterLines - $borderAdjust
                 $this.PageSize = [Math]::Max(1, $calculatedPageSize)
             }
@@ -116,7 +230,7 @@ class DataTableComponent : UIElement {
     }
     
     [hashtable] GetContentBounds() {
-        $borderOffset = if ($this.ShowBorder) { 1 } else { 0 }
+        $borderOffset = $this.ShowBorder ? 1 : 0
         return @{
             X = $this.X + $borderOffset
             Y = $this.Y + $borderOffset
@@ -126,7 +240,7 @@ class DataTableComponent : UIElement {
     }
     
     hidden [string] _RenderContent() {
-        $renderedContent = [System.Text.StringBuilder]::new()
+        $renderedContent = [StringBuilder]::new()
         
         # Force ProcessData if dimensions changed
         if ($this._lastRenderedWidth -ne $this.Width -or $this._lastRenderedHeight -ne $this.Height) {
@@ -136,12 +250,13 @@ class DataTableComponent : UIElement {
         }
         
         # Calculate content area based on border settings
+        $contentX = $this.X
+        $contentY = $this.Y
+        $contentWidth = $this.Width
+        $contentHeight = $this.Height
+
         if ($this.ShowBorder) {
-            $borderColor = if ($this.IsFocusable -and $this.IsFocused) { 
-                Get-ThemeColor "Accent" -Default ([ConsoleColor]::Cyan)
-            } else { 
-                Get-ThemeColor "Border" -Default ([ConsoleColor]::DarkGray)
-            }
+            $borderColor = ($this.IsFocusable -and $this.IsFocused) ? (Get-ThemeColor "Accent") : (Get-ThemeColor "Border")
             
             [void]$renderedContent.Append($this.MoveCursor($this.X, $this.Y))
             [void]$renderedContent.Append($this.SetColor($borderColor))
@@ -152,12 +267,6 @@ class DataTableComponent : UIElement {
             $contentY = $this.Y + 1
             $contentWidth = $this.Width - 2
             $contentHeight = $this.Height - 2
-        } else {
-            # No border, use full dimensions
-            $contentX = $this.X
-            $contentY = $this.Y
-            $contentWidth = $this.Width
-            $contentHeight = $this.Height
         }
         
         $currentY = $contentY
@@ -168,8 +277,8 @@ class DataTableComponent : UIElement {
             [void]$renderedContent.Append($this.SetColor([ConsoleColor]::White))
             [void]$renderedContent.Append("Filter: ")
             
-            $filterDisplayText = if ($this.FilterText) { $this.FilterText } else { "Type to filter..." }
-            $filterColor = if ($this.FilterText) { [ConsoleColor]::Yellow } else { [ConsoleColor]::DarkGray }
+            $filterDisplayText = $this.FilterText ? $this.FilterText : "Type to filter..."
+            $filterColor = $this.FilterText ? [ConsoleColor]::Yellow : [ConsoleColor]::DarkGray
             [void]$renderedContent.Append($this.SetColor($filterColor))
             [void]$renderedContent.Append($filterDisplayText)
             
@@ -177,32 +286,23 @@ class DataTableComponent : UIElement {
         }
         
         # Calculate column widths
-        $totalDefinedWidth = ($this.Columns | Where-Object { $_.Width } | Measure-Object -Property Width -Sum).Sum
-        if ($null -eq $totalDefinedWidth) { $totalDefinedWidth = 0 }
+        $totalDefinedWidth = ($this.Columns | Where-Object { $_.Width } | Measure-Object -Property Width -Sum).Sum ?? 0
         $flexColumns = @($this.Columns | Where-Object { -not $_.Width })
-        $columnSeparators = if ($this.Columns.Count -gt 1) { $this.Columns.Count - 1 } else { 0 }
-        $rowNumberWidth = if ($this.ShowRowNumbers) { 5 } else { 0 }
+        $columnSeparators = $this.Columns.Count -gt 1 ? $this.Columns.Count - 1 : 0
+        $rowNumberWidth = $this.ShowRowNumbers ? 5 : 0
         $remainingWidth = $contentWidth - $totalDefinedWidth - $rowNumberWidth - $columnSeparators
         
-        $flexWidth = 0
-        if ($flexColumns.Count -gt 0) {
-            $flexWidth = [Math]::Floor($remainingWidth / $flexColumns.Count)
-        }
+        $flexWidth = ($flexColumns.Count -gt 0) ? [Math]::Floor($remainingWidth / $flexColumns.Count) : 0
         
         # Assign calculated widths
         foreach ($col in $this.Columns) {
-            if ($col.Width) {
-                $col.CalculatedWidth = $col.Width
-            } else {
-                $col.CalculatedWidth = [Math]::Max(5, $flexWidth)
-            }
+            $col.CalculatedWidth = $col.Width ?? [Math]::Max(5, $flexWidth)
         }
         
         # Header
         if ($this.ShowHeader) {
             $headerX = $contentX
             
-            # Row number header
             if ($this.ShowRowNumbers) {
                 [void]$renderedContent.Append($this.MoveCursor($headerX, $currentY))
                 [void]$renderedContent.Append($this.SetColor([ConsoleColor]::Cyan))
@@ -210,45 +310,40 @@ class DataTableComponent : UIElement {
                 $headerX += 5
             }
             
-            # Column headers
             foreach ($col in $this.Columns) {
-                $headerText = if ($col.Header) { $col.Header } else { $col.Name }
-                $width = $col.CalculatedWidth
+                $headerText = $col.Header ?? $col.Name
+                $columnWidth = $col.CalculatedWidth
                 
-                # Add sort indicator
                 if ($this.AllowSort -and $col.Sortable -ne $false -and $col.Name -eq $this.SortColumn) {
-                    $sortIndicator = if ($this.SortDirection -eq "Ascending") { "▲" } else { "▼" }
+                    $sortIndicator = ($this.SortDirection -eq "Ascending") ? "▲" : "▼"
                     $headerText = "$headerText $sortIndicator"
                 }
                 
-                # Truncate if needed
-                if ($headerText.Length -gt $width) {
-                    $maxLength = [Math]::Max(0, $width - 3)
+                if ($headerText.Length -gt $columnWidth) {
+                    $maxLength = [Math]::Max(0, $columnWidth - 3)
                     $headerText = $headerText.Substring(0, $maxLength) + "..."
                 }
                 
-                # Align header
-                if ($col.Align -eq "Right") {
-                    $alignedText = $headerText.PadLeft($width)
-                } elseif ($col.Align -eq "Center") {
-                    $padding = $width - $headerText.Length
-                    $leftPad = [Math]::Floor($padding / 2)
-                    $rightPad = $padding - $leftPad
-                    $alignedText = " " * $leftPad + $headerText + " " * $rightPad
-                } else {
-                    $alignedText = $headerText.PadRight($width)
+                $alignedText = switch ($col.Align) {
+                    "Right" { $headerText.PadLeft($columnWidth) }
+                    "Center" {
+                        $padding = $columnWidth - $headerText.Length
+                        $leftPad = [Math]::Floor($padding / 2)
+                        $rightPad = $padding - $leftPad
+                        " " * $leftPad + $headerText + " " * $rightPad
+                    }
+                    default { $headerText.PadRight($columnWidth) }
                 }
                 
                 [void]$renderedContent.Append($this.MoveCursor($headerX, $currentY))
                 [void]$renderedContent.Append($this.SetColor([ConsoleColor]::Cyan))
                 [void]$renderedContent.Append($alignedText)
                 
-                $headerX += $width + 1
+                $headerX += $columnWidth + 1
             }
             
             $currentY++
             
-            # Header separator
             [void]$renderedContent.Append($this.MoveCursor($contentX, $currentY))
             [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
             [void]$renderedContent.Append("─" * $contentWidth)
@@ -256,11 +351,7 @@ class DataTableComponent : UIElement {
         }
         
         # Data rows
-        $dataToRender = if ($this.ProcessedData.Count -eq 0 -and $this.Data.Count -gt 0) {
-            $this.Data
-        } else {
-            $this.ProcessedData
-        }
+        $dataToRender = ($this.ProcessedData.Count -eq 0 -and $this.Data.Count -gt 0) ? $this.Data : $this.ProcessedData
         
         $startIdx = $this.CurrentPage * $this.PageSize
         $endIdx = [Math]::Min($startIdx + $this.PageSize - 1, $dataToRender.Count - 1)
@@ -269,24 +360,17 @@ class DataTableComponent : UIElement {
             $row = $dataToRender[$i]
             $rowX = $contentX
             
-            # Selection highlighting
-            $isSelected = if ($this.MultiSelect) {
-                $this.SelectedRows -contains $i
-            } else {
-                $i -eq $this.SelectedRow
-            }
+            $isSelected = $this.MultiSelect ? ($this.SelectedRows -contains $i) : ($i -eq $this.SelectedRow)
             
-            $rowBg = if ($isSelected) { [ConsoleColor]::Cyan } else { [ConsoleColor]::Black }
-            $rowFg = if ($isSelected) { [ConsoleColor]::Black } else { [ConsoleColor]::White }
+            $rowBg = $isSelected ? [ConsoleColor]::Cyan : [ConsoleColor]::Black
+            $rowFg = $isSelected ? [ConsoleColor]::Black : [ConsoleColor]::White
             
-            # Clear row background if selected
             if ($isSelected) {
                 [void]$renderedContent.Append($this.MoveCursor($rowX, $currentY))
                 [void]$renderedContent.Append($this.SetBackgroundColor($rowBg))
                 [void]$renderedContent.Append(" " * $contentWidth)
             }
             
-            # Row number
             if ($this.ShowRowNumbers) {
                 [void]$renderedContent.Append($this.MoveCursor($rowX, $currentY))
                 [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
@@ -295,46 +379,30 @@ class DataTableComponent : UIElement {
                 $rowX += 5
             }
             
-            # Cell data
             foreach ($col in $this.Columns) {
                 $value = $row."$($col.Name)"
-                $width = $col.CalculatedWidth
+                $columnWidth = $col.CalculatedWidth
                 
-                # Format value
-                $displayValue = if ($col.Format -and $value -ne $null) {
-                    & $col.Format $value
-                } elseif ($value -ne $null) {
-                    $value.ToString()
-                } else {
-                    ""
+                $displayValue = if ($col.Format -and $value) { & $col.Format $value } else { "$($value)" }
+                
+                if ($displayValue.Length -gt $columnWidth) {
+                    $maxLength = [Math]::Max(0, $columnWidth - 3)
+                    $displayValue = ($maxLength -le 0) ? "..." : ($displayValue.Substring(0, $maxLength) + "...")
                 }
                 
-                # Truncate if needed
-                if ($displayValue.Length -gt $width) {
-                    $maxLength = [Math]::Max(0, $width - 3)
-                    if ($maxLength -le 0) {
-                        $displayValue = "..."
-                    } else {
-                        $displayValue = $displayValue.Substring(0, $maxLength) + "..."
+                $alignedValue = switch ($col.Align) {
+                    "Right" { $displayValue.PadLeft($columnWidth) }
+                    "Center" {
+                        $padding = $columnWidth - $displayValue.Length
+                        $leftPad = [Math]::Floor($padding / 2)
+                        $rightPad = $padding - $leftPad
+                        " " * $leftPad + $displayValue + " " * $rightPad
                     }
+                    default { $displayValue.PadRight($columnWidth) }
                 }
                 
-                # Align value
-                if ($col.Align -eq "Right") {
-                    $alignedValue = $displayValue.PadLeft($width)
-                } elseif ($col.Align -eq "Center") {
-                    $padding = $width - $displayValue.Length
-                    $leftPad = [Math]::Floor($padding / 2)
-                    $rightPad = $padding - $leftPad
-                    $alignedValue = " " * $leftPad + $displayValue + " " * $rightPad
-                } else {
-                    $alignedValue = $displayValue.PadRight($width)
-                }
-                
-                # Determine color
                 $cellFg = if ($col.Color -and -not $isSelected) {
-                    $colorName = & $col.Color $value $row
-                    Get-ThemeColor $colorName -Default ([ConsoleColor]::White)
+                    Get-ThemeColor (& $col.Color $value $row)
                 } else {
                     $rowFg
                 }
@@ -344,7 +412,7 @@ class DataTableComponent : UIElement {
                 [void]$renderedContent.Append($this.SetBackgroundColor($rowBg))
                 [void]$renderedContent.Append($alignedValue)
                 
-                $rowX += $width + 1
+                $rowX += $columnWidth + 1
             }
             
             $currentY++
@@ -352,11 +420,7 @@ class DataTableComponent : UIElement {
         
         # Empty state
         if ($dataToRender.Count -eq 0) {
-            $emptyMessage = if ($this.FilterText) {
-                "No results match the filter"
-            } else {
-                "No data to display"
-            }
+            $emptyMessage = $this.FilterText ? "No results match the filter" : "No data to display"
             $msgX = $contentX + [Math]::Floor(($contentWidth - $emptyMessage.Length) / 2)
             $msgY = $contentY + [Math]::Floor($contentHeight / 2)
             [void]$renderedContent.Append($this.MoveCursor($msgX, $msgY))
@@ -368,19 +432,14 @@ class DataTableComponent : UIElement {
         if ($this.ShowFooter) {
             $footerY = $contentY + $contentHeight - 1
             
-            # Status
             $statusText = "$($dataToRender.Count) rows"
-            if ($this.FilterText) {
-                $statusText += " (filtered from $($this.Data.Count))"
-            }
-            if ($this.MultiSelect) {
-                $statusText += " | $($this.SelectedRows.Count) selected"
-            }
+            if ($this.FilterText) { $statusText += " (filtered from $($this.Data.Count))" }
+            if ($this.MultiSelect) { $statusText += " | $($this.SelectedRows.Count) selected" }
+            
             [void]$renderedContent.Append($this.MoveCursor($contentX + 1, $footerY))
             [void]$renderedContent.Append($this.SetColor([ConsoleColor]::DarkGray))
             [void]$renderedContent.Append($statusText)
             
-            # Pagination
             if ($dataToRender.Count -gt $this.PageSize) {
                 $totalPages = [Math]::Ceiling($dataToRender.Count / [Math]::Max(1, $this.PageSize))
                 $pageText = "Page $($this.CurrentPage + 1)/$totalPages"
@@ -394,15 +453,13 @@ class DataTableComponent : UIElement {
         return $renderedContent.ToString()
     }
     
-    [bool] HandleInput([System.ConsoleKeyInfo]$key) {
+    [bool] HandleInput([ConsoleKeyInfo]$key) {
         # Filter mode
         if ($key.Modifiers -band [ConsoleModifiers]::Control) {
             switch ($key.Key) {
                 ([ConsoleKey]::F) {
                     $this.FilterMode = -not $this.FilterMode
-                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                        Request-TuiRefresh
-                    }
+                    Request-TuiRefresh
                     return $true
                 }
                 ([ConsoleKey]::S) {
@@ -413,9 +470,7 @@ class DataTableComponent : UIElement {
                             $nextIdx = ($currentIdx + 1) % $sortableCols.Count
                             $this.SortColumn = $sortableCols[$nextIdx].Name
                             $this.ProcessData()
-                            if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                                Request-TuiRefresh
-                            }
+                            Request-TuiRefresh
                         }
                     }
                     return $true
@@ -428,26 +483,20 @@ class DataTableComponent : UIElement {
             switch ($key.Key) {
                 ([ConsoleKey]::Escape) {
                     $this.FilterMode = $false
-                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                        Request-TuiRefresh
-                    }
+                    Request-TuiRefresh
                     return $true
                 }
                 ([ConsoleKey]::Enter) {
                     $this.FilterMode = $false
                     $this.ProcessData()
-                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                        Request-TuiRefresh
-                    }
+                    Request-TuiRefresh
                     return $true
                 }
                 ([ConsoleKey]::Backspace) {
                     if ($this.FilterText.Length -gt 0) {
                         $this.FilterText = $this.FilterText.Substring(0, $this.FilterText.Length - 1)
                         $this.ProcessData()
-                        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                            Request-TuiRefresh
-                        }
+                        Request-TuiRefresh
                     }
                     return $true
                 }
@@ -455,9 +504,7 @@ class DataTableComponent : UIElement {
                     if ($key.KeyChar -and -not [char]::IsControl($key.KeyChar)) {
                         $this.FilterText += $key.KeyChar
                         $this.ProcessData()
-                        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                            Request-TuiRefresh
-                        }
+                        Request-TuiRefresh
                         return $true
                     }
                 }
@@ -473,9 +520,7 @@ class DataTableComponent : UIElement {
                     if ($this.SelectedRow -lt ($this.CurrentPage * $this.PageSize)) {
                         $this.CurrentPage--
                     }
-                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                        Request-TuiRefresh
-                    }
+                    Request-TuiRefresh
                 }
                 return $true
             }
@@ -485,19 +530,13 @@ class DataTableComponent : UIElement {
                     if ($this.SelectedRow -ge (($this.CurrentPage + 1) * $this.PageSize)) {
                         $this.CurrentPage++
                     }
-                    if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-                        Request-TuiRefresh
-                    }
+                    Request-TuiRefresh
                 }
                 return $true
             }
             ([ConsoleKey]::Enter) {
                 if ($this.OnRowSelect -and $this.ProcessedData.Count -gt 0) {
-                    $selectedData = if ($this.MultiSelect) {
-                        @($this.SelectedRows | ForEach-Object { $this.ProcessedData[$_] })
-                    } else {
-                        $this.ProcessedData[$this.SelectedRow]
-                    }
+                    $selectedData = $this.MultiSelect ? @($this.SelectedRows | ForEach-Object { $this.ProcessedData[$_] }) : $this.ProcessedData[$this.SelectedRow]
                     & $this.OnRowSelect $selectedData $this.SelectedRow
                 }
                 return $true
@@ -508,40 +547,23 @@ class DataTableComponent : UIElement {
     }
     
     # Helper methods for ANSI escape sequences
-    hidden [string] MoveCursor([int]$x, [int]$y) {
-        return "`e[$($y + 1);$($x + 1)H"
-    }
+    hidden [string] MoveCursor([int]$x, [int]$y) { return "`e[$($y + 1);$($x + 1)H" }
     
     hidden [string] SetColor([ConsoleColor]$color) {
-        $colorMap = @{
-            'Black' = 30; 'DarkRed' = 31; 'DarkGreen' = 32; 'DarkYellow' = 33
-            'DarkBlue' = 34; 'DarkMagenta' = 35; 'DarkCyan' = 36; 'Gray' = 37
-            'DarkGray' = 90; 'Red' = 91; 'Green' = 92; 'Yellow' = 93
-            'Blue' = 94; 'Magenta' = 95; 'Cyan' = 96; 'White' = 97
-        }
-        $colorCode = $colorMap[$color.ToString()]
-        return "`e[${colorCode}m"
+        $colorMap = @{ Black=30;DarkRed=31;DarkGreen=32;DarkYellow=33;DarkBlue=34;DarkMagenta=35;DarkCyan=36;Gray=37;DarkGray=90;Red=91;Green=92;Yellow=93;Blue=94;Magenta=95;Cyan=96;White=97 }
+        return "`e[$($colorMap[$color.ToString()])m"
     }
     
     hidden [string] SetBackgroundColor([ConsoleColor]$color) {
-        $colorMap = @{
-            'Black' = 40; 'DarkRed' = 41; 'DarkGreen' = 42; 'DarkYellow' = 43
-            'DarkBlue' = 44; 'DarkMagenta' = 45; 'DarkCyan' = 46; 'Gray' = 47
-            'DarkGray' = 100; 'Red' = 101; 'Green' = 102; 'Yellow' = 103
-            'Blue' = 104; 'Magenta' = 105; 'Cyan' = 106; 'White' = 107
-        }
-        $colorCode = $colorMap[$color.ToString()]
-        return "`e[${colorCode}m"
+        $colorMap = @{ Black=40;DarkRed=41;DarkGreen=42;DarkYellow=43;DarkBlue=44;DarkMagenta=45;DarkCyan=46;Gray=47;DarkGray=100;Red=101;Green=102;Yellow=103;Blue=104;Magenta=105;Cyan=106;White=107 }
+        return "`e[$($colorMap[$color.ToString()])m"
     }
     
-    hidden [string] ResetColor() {
-        return "`e[0m"
-    }
+    hidden [string] ResetColor() { return "`e[0m" }
     
     hidden [string] RenderBorder([string]$title) {
-        $borderBuilder = [System.Text.StringBuilder]::new()
+        $borderBuilder = [StringBuilder]::new()
         
-        # Top border
         [void]$borderBuilder.Append("┌")
         
         if (-not [string]::IsNullOrWhiteSpace($title)) {
@@ -563,7 +585,6 @@ class DataTableComponent : UIElement {
         
         [void]$borderBuilder.Append("┐")
         
-        # Side borders
         for ($row = 1; $row -lt $this.Height - 1; $row++) {
             [void]$borderBuilder.Append($this.MoveCursor($this.X, $this.Y + $row))
             [void]$borderBuilder.Append("│")
@@ -571,7 +592,6 @@ class DataTableComponent : UIElement {
             [void]$borderBuilder.Append("│")
         }
         
-        # Bottom border
         [void]$borderBuilder.Append($this.MoveCursor($this.X, $this.Y + $this.Height - 1))
         [void]$borderBuilder.Append("└")
         [void]$borderBuilder.Append("─" * ($this.Width - 2))
@@ -583,63 +603,53 @@ class DataTableComponent : UIElement {
     # Public methods
     [void] RefreshData() {
         $this.ProcessData()
-        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-            Request-TuiRefresh
-        }
+        Request-TuiRefresh
     }
     
     [void] SetData([hashtable[]]$data) {
         $this.Data = $data
         $this.ProcessData()
-        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-            Request-TuiRefresh
-        }
+        Request-TuiRefresh
     }
     
     [void] SetColumns([hashtable[]]$columns) {
         $this.Columns = $columns
         $this.ProcessData()
-        if (Get-Command "Request-TuiRefresh" -ErrorAction SilentlyContinue) {
-            Request-TuiRefresh
-        }
+        Request-TuiRefresh
     }
 }
-
 #endregion
 
 #region Factory Functions for Backward Compatibility
 
-function global:New-TuiDataTable {
+function New-TuiDataTable {
     param([hashtable]$Props = @{})
     
-    $name = if ($Props.Name) { $Props.Name } else { "DataTable_$([Guid]::NewGuid().ToString('N').Substring(0,8))" }
-    $data = if ($Props.Data) { $Props.Data } else { @() }
-    $columns = if ($Props.Columns) { $Props.Columns } else { @() }
+    $name = $Props.Name ?? "DataTable_$([Guid]::NewGuid().ToString('N').Substring(0,8))"
+    $data = $Props.Data ?? @()
+    $columns = $Props.Columns ?? @()
     
     $table = [DataTableComponent]::new($name, $data, $columns)
     
-    # Set properties from Props
-    if ($Props.X) { $table.X = $Props.X }
-    if ($Props.Y) { $table.Y = $Props.Y }
-    if ($Props.Width) { $table.Width = $Props.Width }
-    if ($Props.Height) { $table.Height = $Props.Height }
-    if ($Props.Title) { $table.Title = $Props.Title }
-    if ($null -ne $Props.ShowBorder) { $table.ShowBorder = $Props.ShowBorder }
-    if ($null -ne $Props.ShowHeader) { $table.ShowHeader = $Props.ShowHeader }
-    if ($null -ne $Props.ShowFooter) { $table.ShowFooter = $Props.ShowFooter }
-    if ($null -ne $Props.ShowRowNumbers) { $table.ShowRowNumbers = $Props.ShowRowNumbers }
-    if ($null -ne $Props.AllowSort) { $table.AllowSort = $Props.AllowSort }
-    if ($null -ne $Props.AllowFilter) { $table.AllowFilter = $Props.AllowFilter }
-    if ($null -ne $Props.AllowSelection) { $table.AllowSelection = $Props.AllowSelection }
-    if ($null -ne $Props.MultiSelect) { $table.MultiSelect = $Props.MultiSelect }
-    if ($null -ne $Props.Visible) { $table.Visible = $Props.Visible }
-    if ($Props.OnRowSelect) { $table.OnRowSelect = $Props.OnRowSelect }
-    if ($Props.OnSelectionChange) { $table.OnSelectionChange = $Props.OnSelectionChange }
+    $table.X = $Props.X ?? $table.X
+    $table.Y = $Props.Y ?? $table.Y
+    $table.Width = $Props.Width ?? $table.Width
+    $table.Height = $Props.Height ?? $table.Height
+    $table.Title = $Props.Title ?? $table.Title
+    $table.ShowBorder = $Props.ShowBorder ?? $table.ShowBorder
+    $table.ShowHeader = $Props.ShowHeader ?? $table.ShowHeader
+    $table.ShowFooter = $Props.ShowFooter ?? $table.ShowFooter
+    $table.ShowRowNumbers = $Props.ShowRowNumbers ?? $table.ShowRowNumbers
+    $table.AllowSort = $Props.AllowSort ?? $table.AllowSort
+    $table.AllowFilter = $Props.AllowFilter ?? $table.AllowFilter
+    $table.AllowSelection = $Props.AllowSelection ?? $table.AllowSelection
+    $table.MultiSelect = $Props.MultiSelect ?? $table.MultiSelect
+    $table.Visible = $Props.Visible ?? $table.Visible
+    $table.OnRowSelect = $Props.OnRowSelect ?? $table.OnRowSelect
+    $table.OnSelectionChange = $Props.OnSelectionChange ?? $table.OnSelectionChange
     
     return $table
 }
-
 #endregion
 
-# AI: FIX - Export functions only. Classes are automatically exported in PowerShell 5.1
-Export-ModuleMember -Function @('New-TuiDataTable')
+Export-ModuleMember -Function 'New-TuiDataTable'

@@ -3,24 +3,20 @@
 # Main entry screen for the application.
 # ==============================================================================
 
-# Import models for Task and enum types
+# AI: CRITICAL FIX - Import models module for TaskStatus enum and other types
 using module '..\..\modules\models.psm1'
 
-# Import base classes and components this screen uses
+# AI: FIX - Use $PSScriptRoot-based paths for better portability
 using module '..\..\components\ui-classes.psm1'
-using module '..\..\components\panel-classes.psm1'
-using module '..\..\components\table-class.psm1'
-
-# AI: Import utilities - removed as these are loaded by main app in correct order
-# Note: Invoke-WithErrorHandling is available globally from exceptions module
+using module '..\..\layout\panels-class.psm1'
+using module '..\..\components\navigation-class.psm1'
+using module '..\..\components\advanced-data-components.psm1'
 
 class DashboardScreen : Screen {
-    # --- UI Components ---
     [BorderPanel] $MainPanel
     [ContentPanel] $SummaryPanel
-    [Table] $MenuTable
-    
-    # --- State ---
+    [NavigationMenu] $MainMenu
+    [BorderPanel] $MenuPanel
     [object[]] $Tasks = @()
 
     DashboardScreen([hashtable]$services) : base("DashboardScreen", $services) {
@@ -29,7 +25,6 @@ class DashboardScreen : Screen {
 
     [void] Initialize() {
         Invoke-WithErrorHandling -Component "DashboardScreen" -Context "Initialize" -ScriptBlock {
-            # --- Panel Setup ---
             $this.MainPanel = [BorderPanel]::new("DashboardMain", 0, 0, 120, 30)
             $this.MainPanel.Title = "PMC Terminal v5 - Dashboard"
             $this.MainPanel.BorderStyle = "Double"
@@ -38,80 +33,86 @@ class DashboardScreen : Screen {
             $this.SummaryPanel = [ContentPanel]::new("DashboardSummary", 2, 2, 40, 10)
             $this.MainPanel.AddChild($this.SummaryPanel)
 
-            # --- Main Menu Table ---
-            $this.MenuTable = [Table]::new("MainMenu")
-            $this.MenuTable.SetColumns(@(
-                [TableColumn]::new("Key", "Key", 5),
-                [TableColumn]::new("Action", "Action", 40)
-            ))
-            $menuItems = @(
-                [pscustomobject]@{ Key = '1'; Action = 'Task Management'; Screen = 'TaskListScreen' },
-                [pscustomobject]@{ Key = '2'; Action = 'Project Management'; Screen = 'ProjectListScreen' },
-                [pscustomobject]@{ Key = '3'; Action = 'Settings'; Screen = 'SettingsScreen' },
-                [pscustomobject]@{ Key = 'Q'; Action = 'Quit Application'; Screen = 'EXIT' }
-            )
-            $this.MenuTable.SetData($menuItems)
-            $this.MenuTable.ShowHeaders = $false
+            # AI: FIX - NavigationMenu doesn't need positioning - its parent panel handles that
+            $this.MainMenu = [NavigationMenu]::new("MainMenu")
             
-            # Add table to a containing panel for layout
-            $menuPanel = [BorderPanel]::new("MenuContainer", 44, 2, 50, 10)
-            $menuPanel.Title = "Main Menu"
-            $menuPanel.AddChild($this.MenuTable)
-            $this.MainPanel.AddChild($menuPanel)
+            $this.BuildMainMenu()
+            
+            # AI: FIX - Create menu panel with proper dimensions and position
+            $this.MenuPanel = [BorderPanel]::new("MenuContainer", 44, 2, 50, 12)
+            $this.MenuPanel.Title = "Main Menu"
+            $this.MenuPanel.AddChild($this.MainMenu)
+            $this.MainPanel.AddChild($this.MenuPanel)
 
-            # --- Event Subscription & Data Refresh ---
             $this.SubscribeToEvent("Tasks.Changed", { $this.RefreshData() })
-            $this.RefreshData() # Initial data load
+            $this.RefreshData()
+            
+            Write-Log -Level Info -Message "DashboardScreen initialized successfully"
         }
+    }
+
+    hidden [void] BuildMainMenu() {
+        $this.MainMenu.AddItem([NavigationItem]::new("1", "Task Management", { $this.Services.Navigation.GoTo("/tasks") }))
+        $this.MainMenu.AddItem([NavigationItem]::new("2", "Project Management", { $this.Services.Navigation.GoTo("/projects") }))
+        $this.MainMenu.AddItem([NavigationItem]::new("3", "Settings", { $this.Services.Navigation.GoTo("/settings") }))
+        $this.MainMenu.AddSeparator()
+        $this.MainMenu.AddItem([NavigationItem]::new("Q", "Quit Application", { $this.Services.Navigation.RequestExit() }))
+        Write-Log -Level Debug -Message "Main menu built with $($this.MainMenu.Items.Count) items"
     }
 
     hidden [void] RefreshData() {
         Invoke-WithErrorHandling -Component "DashboardScreen" -Context "RefreshData" -ScriptBlock {
+            if (-not $this.Services.DataManager) { Write-Log -Level Warning -Message "DataManager service not available"; return }
             $this.Tasks = @($this.Services.DataManager.GetTasks())
             $this.UpdateSummary()
+            Write-Log -Level Debug -Message "Dashboard data refreshed - $($this.Tasks.Count) tasks loaded"
         }
     }
 
     hidden [void] UpdateSummary() {
+        if (-not $this.SummaryPanel) { Write-Log -Level Warning -Message "Summary panel not initialized"; return }
         $total = $this.Tasks.Count
+        # AI: FIX - TaskStatus enum should now be available from models.psm1 import
         $completed = ($this.Tasks | Where-Object { $_.Status -eq [TaskStatus]::Completed }).Count
-        
-        $summaryContent = @(
-            "Task Summary",
-            "------------",
-            "Total Tasks: $total",
-            "Completed:   $completed"
-        )
+        $pending = $total - $completed
+        $summaryContent = @( "Task Summary", "═══════════", "", "Total Tasks: $total", "Completed:   $completed", "Pending:     $pending", "", "Use number keys or", "arrow keys + Enter" )
         $this.SummaryPanel.SetContent($summaryContent)
+        Write-Log -Level Debug -Message "Summary updated: $total total, $completed completed"
     }
 
     [void] HandleInput([ConsoleKeyInfo]$key) {
         Invoke-WithErrorHandling -Component "DashboardScreen" -Context "HandleInput" -ScriptBlock {
+            if (-not $this.MainMenu) { Write-Log -Level Warning -Message "Main menu not initialized"; return }
+            
+            $keyChar = $key.KeyChar.ToString().ToUpper()
+            if ($keyChar -match '^[123Q]$') {
+                Write-Log -Level Debug -Message "Processing hotkey: $keyChar"
+                $this.MainMenu.ExecuteAction($keyChar)
+                return
+            }
+            
             switch ($key.Key) {
-                ([ConsoleKey]::UpArrow) { $this.MenuTable.SelectPrevious() }
-                ([ConsoleKey]::DownArrow) { $this.MenuTable.SelectNext() }
+                ([ConsoleKey]::UpArrow) { if ($this.MainMenu.SelectedIndex -gt 0) { $this.MainMenu.SelectedIndex-- } }
+                ([ConsoleKey]::DownArrow) { if ($this.MainMenu.SelectedIndex -lt ($this.MainMenu.Items.Count - 1)) { $this.MainMenu.SelectedIndex++ } }
                 ([ConsoleKey]::Enter) {
-                    $selectedItem = $this.MenuTable.GetSelectedItem()
-                    if ($selectedItem) {
-                        if ($selectedItem.Screen -eq 'EXIT') {
-                            $this.Services.Navigation.RequestExit()
-                        } else {
-                            $this.Services.Navigation.PushScreen($selectedItem.Screen)
-                        }
+                    $selectedItem = $this.MainMenu.Items[$this.MainMenu.SelectedIndex]
+                    if ($selectedItem -and $selectedItem.Enabled) {
+                        Write-Log -Level Debug -Message "Executing selected menu item: $($selectedItem.Key)"
+                        $selectedItem.Execute()
                     }
                 }
-                default {
-                    # Handle hotkeys
-                    $selectedItem = $this.MenuTable.Data | Where-Object { $_.Key -eq $key.KeyChar.ToString().ToUpper() } | Select-Object -First 1
-                    if ($selectedItem) {
-                         if ($selectedItem.Screen -eq 'EXIT') {
-                            $this.Services.Navigation.RequestExit()
-                        } else {
-                            $this.Services.Navigation.PushScreen($selectedItem.Screen)
-                        }
-                    }
-                }
+                ([ConsoleKey]::Escape) { Write-Log -Level Debug -Message "Escape pressed - requesting exit"; $this.Services.Navigation.RequestExit() }
+                default { Write-Log -Level Debug -Message "Unhandled key: $($key.Key)" }
             }
         }
     }
+
+    [void] OnDeactivate() {
+        Invoke-WithErrorHandling -Component "DashboardScreen" -Context "OnDeactivate" -ScriptBlock {
+            $this.Cleanup() # Unsubscribe from events
+            Write-Log -Level Debug -Message "DashboardScreen deactivated and cleaned up"
+        }
+    }
 }
+
+Export-ModuleMember -Function @() -Variable @() -Cmdlet @() -Alias @()

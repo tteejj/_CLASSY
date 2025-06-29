@@ -1,12 +1,10 @@
 # ==============================================================================
 # PMC Terminal v5 - Base UI Class Hierarchy
-# Provides the foundational classes for all UI components, incorporating the
-# stable and safe IRenderable pattern directly into the base element.
+# Provides the foundational classes for all UI components.
 # ==============================================================================
 
 using namespace System.Text
-
-# AI: FIX - Removed internal Import-Module statement. Dependencies managed by _CLASSY-MAIN.ps1.
+using namespace System.Management.Automation
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -19,24 +17,20 @@ class UIElement {
     
     UIElement([string]$name) {
         if ([string]::IsNullOrWhiteSpace($name)) {
-            throw [System.ArgumentException]::new("UIElement name cannot be null or empty.")
+            throw [ArgumentException]::new("UIElement name cannot be null or empty.")
         }
         $this.Name = $name
     }
 
-    # Public, safe render method. Derived classes should NOT override this.
     [string] Render() {
         return Invoke-WithErrorHandling -Component $this.Name -Context "Render" -ScriptBlock {
             if (-not $this.Visible) { return "" }
-            
-            # Call the internal, abstract render method that derived classes MUST implement.
             return $this._RenderContent()
         } -AdditionalData @{ ComponentType = $this.GetType().Name }
     }
 
-    # Abstract method - must be implemented by derived classes.
     hidden [string] _RenderContent() {
-        throw [System.NotImplementedException]::new("Component '$($this.Name)' of type '$($this.GetType().Name)' must implement the _RenderContent() method.")
+        throw [NotImplementedException]::new("Component '$($this.Name)' of type '$($this.GetType().Name)' must implement the _RenderContent() method.")
     }
     
     [string] ToString() {
@@ -54,8 +48,8 @@ class Component : UIElement {
     }
 
     [void] AddChild([UIElement]$child) {
-        if (-not $child) { throw [System.ArgumentNullException]::new("child") }
-        if ($child -eq $this) { throw [System.InvalidOperationException]::new("A component cannot be its own child.") }
+        if (-not $child) { throw [ArgumentNullException]::new("child") }
+        if ($child -eq $this) { throw [InvalidOperationException]::new("A component cannot be its own child.") }
         
         $child.Parent = $this
         $this.Children.Add($child)
@@ -72,7 +66,7 @@ class Panel : Component {
     [bool]$ShowBorder = $true
 
     Panel([string]$name, [int]$x, [int]$y, [int]$width, [int]$height) : base($name) {
-        if ($width -le 0 -or $height -le 0) { throw [System.ArgumentOutOfRangeException]::new("Panel dimensions must be positive.") }
+        if ($width -le 0 -or $height -le 0) { throw [ArgumentOutOfRangeException]::new("Panel dimensions must be positive.") }
         
         $this.X = $x
         $this.Y = $y
@@ -81,7 +75,7 @@ class Panel : Component {
     }
 
     [hashtable] GetContentArea() {
-        $borderOffset = if ($this.ShowBorder) { 1 } else { 0 }
+        $borderOffset = $this.ShowBorder ? 1 : 0
         return @{
             X      = $this.X + $borderOffset
             Y      = $this.Y + $borderOffset
@@ -99,7 +93,7 @@ class Screen : UIElement {
     hidden [System.Collections.Generic.Dictionary[string, string]]$EventSubscriptions
 
     Screen([string]$name, [hashtable]$services) : base($name) {
-        if (-not $services) { throw [System.ArgumentNullException]::new("services") }
+        if (-not $services) { throw [ArgumentNullException]::new("services") }
         
         $this.Services = $services
         $this.State = [System.Collections.Generic.Dictionary[string, object]]::new()
@@ -107,7 +101,6 @@ class Screen : UIElement {
         $this.EventSubscriptions = [System.Collections.Generic.Dictionary[string, string]]::new()
     }
     
-    # Virtual lifecycle methods for derived screens to override.
     [void] Initialize() { }
     [void] OnEnter() { }
     [void] OnExit() { }
@@ -115,7 +108,6 @@ class Screen : UIElement {
     [void] HandleInput([System.ConsoleKeyInfo]$key) { }
 
     [void] Cleanup() {
-        # Unsubscribe from all events to prevent memory leaks
         foreach ($kvp in $this.EventSubscriptions.GetEnumerator()) {
             try {
                 Unsubscribe-Event -EventName $kvp.Key -SubscriberId $kvp.Value
@@ -130,18 +122,15 @@ class Screen : UIElement {
     }
     
     [void] AddPanel([Panel]$panel) {
-        if (-not $panel) { throw [System.ArgumentNullException]::new("panel") }
+        if (-not $panel) { throw [ArgumentNullException]::new("panel") }
         $this.Panels.Add($panel)
     }
 
     [void] SubscribeToEvent([string]$eventName, [scriptblock]$action) {
-        if ([string]::IsNullOrWhiteSpace($eventName)) { throw [System.ArgumentException]::new("Event name cannot be null or empty.") }
-        if (-not $action) { throw [System.ArgumentNullException]::new("action") }
+        if ([string]::IsNullOrWhiteSpace($eventName)) { throw [ArgumentException]::new("Event name cannot be null or empty.") }
+        if (-not $action) { throw [ArgumentNullException]::new("action") }
         
         $subscriptionId = Subscribe-Event -EventName $eventName -Action $action
         $this.EventSubscriptions[$eventName] = $subscriptionId
     }
 }
-
-# AI: FIX - Removed -Class parameter for PowerShell 5.1 compatibility
-# Classes are automatically exported in PowerShell 5.1 when defined in a module

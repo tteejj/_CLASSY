@@ -18,7 +18,7 @@ class KeybindingService {
         $this.ContextStack = [System.Collections.Generic.List[string]]::new()
         $this.InitializeDefaultBindings()
         
-        Write-Log -Level Info -Message "KeybindingService initialized" -Component "KeybindingService"
+        Write-Log -Level Info -Message "KeybindingService initialized"
     }
     
     KeybindingService([bool]$enableChords) {
@@ -26,7 +26,7 @@ class KeybindingService {
         $this.EnableChords = $enableChords
         $this.InitializeDefaultBindings()
         
-        Write-Log -Level Info -Message "KeybindingService initialized with chords: $enableChords" -Component "KeybindingService"
+        Write-Log -Level Info -Message "KeybindingService initialized with chords: $enableChords"
     }
     
     hidden [void] InitializeDefaultBindings() {
@@ -65,7 +65,7 @@ class KeybindingService {
                 Modifiers = if ($modifiers) { @($modifiers) } else { @() }
             }
             
-            Write-Log -Level Debug -Message "Set keybinding: $actionName -> $key" -Component "KeybindingService"
+            Write-Log -Level Debug -Message "Set keybinding: $actionName -> $key"
         }
     }
     
@@ -80,7 +80,7 @@ class KeybindingService {
                 Modifiers = if ($modifiers) { @($modifiers) } else { @() }
             }
             
-            Write-Log -Level Debug -Message "Set keybinding: $actionName -> $key" -Component "KeybindingService"
+            Write-Log -Level Debug -Message "Set keybinding: $actionName -> $key"
         }
     }
     
@@ -99,7 +99,7 @@ class KeybindingService {
             KeyChar = $keyInfo.KeyChar
             Modifiers = $modifiers
         }
-        Write-Log -Level Debug -Message "Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))" -Component "KeybindingService"
+        Write-Log -Level Debug -Message "Set keybinding for '$actionName': $($this.GetBindingDescription($actionName))"
     }
     
     [void] RemoveBinding([string]$actionName) {
@@ -111,7 +111,7 @@ class KeybindingService {
             $normalizedName = $actionName.ToLower()
             if ($this.KeyMap.ContainsKey($normalizedName)) {
                 $this.KeyMap.Remove($normalizedName)
-                Write-Log -Level Debug -Message "Removed keybinding: $actionName" -Component "KeybindingService"
+                Write-Log -Level Debug -Message "Removed keybinding: $actionName"
             }
         }
     }
@@ -201,7 +201,7 @@ class KeybindingService {
             }
             
             $this.GlobalHandlers[$actionName.ToLower()] = $handler
-            Write-Log -Level Debug -Message "Registered global handler: $actionName" -Component "KeybindingService"
+            Write-Log -Level Debug -Message "Registered global handler: $actionName"
         }
     }
     
@@ -216,12 +216,12 @@ class KeybindingService {
                 if ($this.IsAction($action, $keyInfo, $context)) {
                     # Execute global handler if registered
                     if ($this.GlobalHandlers.ContainsKey($action)) {
-                        Write-Log -Level Debug -Message "Executing global handler: $action" -Component "KeybindingService"
+                        Write-Log -Level Debug -Message "Executing global handler: $action"
                         try {
                             return & $this.GlobalHandlers[$action] -KeyInfo $keyInfo -Context $context
                         }
                         catch {
-                            Write-Log -Level Error -Message "Global handler failed for '$action': $_" -Component "KeybindingService"
+                            Write-Log -Level Error -Message "Global handler failed for '$action': $_"
                             return $null
                         }
                     }
@@ -238,7 +238,7 @@ class KeybindingService {
     [void] PushContext([string]$context) {
         if (-not [string]::IsNullOrWhiteSpace($context)) {
             $this.ContextStack.Add($context)
-            Write-Log -Level Debug -Message "Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
+            Write-Log -Level Debug -Message "Pushed keybinding context: $context (Stack depth: $($this.ContextStack.Count))"
         }
     }
     
@@ -246,7 +246,7 @@ class KeybindingService {
         if ($this.ContextStack.Count -gt 0) {
             $context = $this.ContextStack[-1]
             $this.ContextStack.RemoveAt($this.ContextStack.Count - 1)
-            Write-Log -Level Debug -Message "Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))" -Component "KeybindingService"
+            Write-Log -Level Debug -Message "Popped keybinding context: $context (Stack depth: $($this.ContextStack.Count))"
             return $context
         }
         return $null
@@ -315,7 +315,7 @@ class KeybindingService {
             }
             
             $this.KeyMap | ConvertTo-Json -Depth 3 | Out-File -FilePath $path -Encoding UTF8
-            Write-Log -Level Info -Message "Exported keybindings to: $path" -Component "KeybindingService"
+            Write-Log -Level Info -Message "Exported keybindings to: $path"
         }
     }
     
@@ -326,7 +326,7 @@ class KeybindingService {
             }
             
             if (-not (Test-Path $path)) {
-                Write-Log -Level Warning -Message "Keybindings file not found: $path" -Component "KeybindingService"
+                Write-Log -Level Warning -Message "Keybindings file not found: $path"
                 return
             }
             
@@ -342,10 +342,10 @@ class KeybindingService {
                         $this.KeyMap[$prop.Name].KeyChar = $prop.Value.KeyChar
                     }
                 }
-                Write-Log -Level Info -Message "Imported keybindings from: $path" -Component "KeybindingService"
+                Write-Log -Level Info -Message "Imported keybindings from: $path"
             }
             catch {
-                Write-Log -Level Error -Message "Failed to import keybindings from '$path': $_" -Component "KeybindingService"
+                Write-Log -Level Error -Message "Failed to import keybindings from '$path': $_"
                 throw
             }
         }
@@ -374,6 +374,5 @@ function Initialize-KeybindingService {
     return $service
 }
 
-# AI: FIX - PowerShell 5.1 doesn't support -Class parameter
-# Classes are automatically exported when module is imported
-Export-ModuleMember -Function @('Initialize-KeybindingService')
+# AI: FIX - PowerShell 7+ requires explicit class export for using module statements
+Export-ModuleMember -Function 'Initialize-KeybindingService'

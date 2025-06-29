@@ -3,13 +3,18 @@
 # Displays and manages tasks.
 # ==============================================================================
 
-# AI: FIX - Removed all using module statements. Dependencies managed by _CLASSY-MAIN.ps1.
-# Note: All required classes and functions are available globally after module loading.
+# AI: CRITICAL FIX - Import models module for TaskStatus enum and other types
+using module '..\modules\models.psm1'
+
+# AI: FIX - Use relative paths for better portability
+using module '..\components\ui-classes.psm1'
+using module '..\layout\panels-class.psm1'
+using module '..\components\advanced-data-components.psm1'
 
 class TaskListScreen : Screen {
     # --- UI Components ---
     [BorderPanel] $MainPanel
-    [DataTableComponent] $TaskTable
+    [Table] $TaskTable
     [ContentPanel] $NavPanel
 
     # --- State ---
@@ -25,22 +30,13 @@ class TaskListScreen : Screen {
             $this.AddPanel($this.MainPanel)
 
             # --- Task Table ---
-            $this.TaskTable = [DataTableComponent]::new("TaskTable")
-            $this.TaskTable.X = 1
-            $this.TaskTable.Y = 1
-            $this.TaskTable.Width = 118
-            $this.TaskTable.Height = 24
-            $this.TaskTable.Title = "Tasks"
-            $this.TaskTable.ShowBorder = $false
-            
-            # Set columns for the data table
-            $columns = @(
-                @{ Name = "Title"; Header = "Task Title"; Width = 50 },
-                @{ Name = "Status"; Header = "Status"; Width = 15 },
-                @{ Name = "Priority"; Header = "Priority"; Width = 12 },
-                @{ Name = "DueDate"; Header = "Due Date"; Width = 15 }
-            )
-            $this.TaskTable.SetColumns($columns)
+            $this.TaskTable = [Table]::new("TaskTable")
+            $this.TaskTable.SetColumns(@(
+                [TableColumn]::new("Title", "Task Title", 50),
+                [TableColumn]::new("Status", "Status", 15),
+                [TableColumn]::new("Priority", "Priority", 12),
+                [TableColumn]::new("DueDate", "Due Date", 15)
+            ))
             
             $tableContainer = [BorderPanel]::new("TableContainer", 1, 1, 118, 24)
             $tableContainer.ShowBorder = $false
@@ -61,8 +57,8 @@ class TaskListScreen : Screen {
         Invoke-WithErrorHandling -Component "TaskListScreen" -Context "RefreshData" -ScriptBlock {
             $allTasks = @($this.Services.DataManager.GetTasks())
             $filteredTasks = switch ($this.FilterStatus) {
-                "Active" { $allTasks | Where-Object { $_.Status -ne 'Completed' } }
-                "Completed" { $allTasks | Where-Object { $_.Status -eq 'Completed' } }
+                "Active" { $allTasks | Where-Object { $_.Status -ne [TaskStatus]::Completed } }
+                "Completed" { $allTasks | Where-Object { $_.Status -eq [TaskStatus]::Completed } }
                 default { $allTasks }
             }
             $this.TaskTable.SetData($filteredTasks)
@@ -79,20 +75,16 @@ class TaskListScreen : Screen {
 
     [void] HandleInput([ConsoleKeyInfo]$key) {
         Invoke-WithErrorHandling -Component "TaskListScreen" -Context "HandleInput" -ScriptBlock {
-            # Let the data table handle its own input first
-            if ($this.TaskTable.HandleInput($key)) {
-                return
-            }
-            
-            # Handle screen-specific input
             switch ($key.Key) {
+                ([ConsoleKey]::UpArrow) { $this.TaskTable.SelectPrevious() }
+                ([ConsoleKey]::DownArrow) { $this.TaskTable.SelectNext() }
                 ([ConsoleKey]::Spacebar) { $this.ToggleSelectedTask() }
                 ([ConsoleKey]::Escape) { $this.Services.Navigation.PopScreen() }
                 default {
                     switch ($key.KeyChar.ToString().ToUpper()) {
-                        'N' { $this.Services.Navigation.PushScreen("NewTaskScreen") }
-                        'E' { # Edit logic would go here }
-                        'D' { # Delete logic would go here }
+                        'N' { $this.ShowNewTaskDialog() }
+                        'E' { $this.EditSelectedTask() }
+                        'D' { $this.DeleteSelectedTask() }
                         'F' { $this.CycleFilter() }
                     }
                 }
@@ -101,16 +93,48 @@ class TaskListScreen : Screen {
     }
     
     hidden [void] ToggleSelectedTask() {
-        if ($this.TaskTable.ProcessedData -and $this.TaskTable.SelectedRow -lt $this.TaskTable.ProcessedData.Count) {
-            $task = $this.TaskTable.ProcessedData[$this.TaskTable.SelectedRow]
-            if ($task) {
-                if ($task.Status -eq [TaskStatus]::Completed) {
-                    $task.Status = [TaskStatus]::Active
-                } else {
-                    $task.Complete()
-                }
-                $this.Services.DataManager.UpdateTask($task)
+        $task = $this.TaskTable.GetSelectedItem()
+        if ($task) {
+            # AI: FIX - TaskStatus enum should now be available from models.psm1 import
+            if ($task.Status -eq [TaskStatus]::Completed) {
+                $task.Status = [TaskStatus]::Pending
+            } else {
+                $task.Complete()
             }
+            $this.Services.DataManager.UpdateTask($task)
+        }
+    }
+
+    hidden [void] ShowNewTaskDialog() {
+        # AI: FIX - Implemented new task dialog functionality
+        Write-Log -Level Info -Message "New task dialog requested"
+        
+        # AI: FIX - Capture $this context for closure
+        $dataManager = $this.Services.DataManager
+        $refreshCallback = { $this.RefreshData() }.GetNewClosure()
+        
+        # Use the input dialog from dialog system
+        Show-InputDialog -Title "New Task" -Prompt "Enter task title:" -OnSubmit {
+            param($Value)
+            if (-not [string]::IsNullOrWhiteSpace($Value)) {
+                $newTask = $dataManager.AddTask($Value, "", [TaskPriority]::Medium, "General")
+                Write-Log -Level Info -Message "Created new task: $($newTask.Title)"
+                & $refreshCallback
+            }
+        }
+    }
+
+    hidden [void] EditSelectedTask() {
+        $task = $this.TaskTable.GetSelectedItem()
+        if ($task) {
+            Write-Log -Level Info -Message "Edit task requested for: $($task.Title)"
+        }
+    }
+
+    hidden [void] DeleteSelectedTask() {
+        $task = $this.TaskTable.GetSelectedItem()
+        if ($task) {
+            Write-Log -Level Info -Message "Delete task requested for: $($task.Title)"
         }
     }
 
@@ -123,3 +147,5 @@ class TaskListScreen : Screen {
         $this.RefreshData()
     }
 }
+
+Export-ModuleMember -Function @() -Variable @() -Cmdlet @() -Alias @()
